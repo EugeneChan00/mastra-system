@@ -6,6 +6,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Mastra generated runtime/build state
+.mastra/
+
 # Environment files (contain secrets)
 .env
 .env.local

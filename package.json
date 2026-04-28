@@ -10,7 +10,7 @@
     "paseo"
   ],
   "scripts": {
-    "typecheck": "npm run typecheck -w mastra-agents && npm run typecheck -w pi && npm run typecheck -w paseo"
+    "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "dependencies": {
     "json": "*"
