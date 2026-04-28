@@ -1,5 +1,6 @@
 import type { AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
+import type { MastraAgentActivitySink } from "../tui/index.js";
 import { Type } from "typebox";
 import {
 	DEFAULT_MODEL_CONTENT_LIMIT,
@@ -12,6 +13,7 @@ import {
 	MASTRA_WORKFLOW_STATUS_TOOL_NAME,
 	REQUEST_CONTEXT_MODE_ID_KEY,
 } from "../const.js";
+import { MastraAgentCard } from "../tui/index.js";
 import { MastraHttpClient } from "./client.js";
 import { defaultResourceId, defaultThreadId } from "./memory.js";
 import { applyNormalizedEvent, normalizeMastraChunk, truncateText } from "./normalize.js";
@@ -77,9 +79,13 @@ export const MASTRA_WORKFLOW_STATUS_PARAMETERS = Type.Object({
 	withNestedWorkflows: Type.Optional(Type.Boolean({ description: "Include nested workflow data in steps" })),
 });
 
-export function createMastraTools(client = new MastraHttpClient()) {
+export interface MastraToolOptions {
+	agentActivitySink?: MastraAgentActivitySink;
+}
+
+export function createMastraTools(client = new MastraHttpClient(), options: MastraToolOptions = {}) {
 	return [
-		createMastraAgentTool(client),
+		createMastraAgentTool(client, options.agentActivitySink),
 		createMastraAgentListTool(client),
 		createMastraAgentInspectTool(client),
 		createMastraAgentStatusTool(client),
@@ -89,7 +95,7 @@ export function createMastraTools(client = new MastraHttpClient()) {
 	];
 }
 
-export function createMastraAgentTool(client = new MastraHttpClient()) {
+export function createMastraAgentTool(client = new MastraHttpClient(), activitySink?: MastraAgentActivitySink) {
 	return {
 		name: MASTRA_AGENT_CALL_TOOL_NAME,
 		label: "Mastra Agent",
@@ -100,27 +106,39 @@ export function createMastraAgentTool(client = new MastraHttpClient()) {
 		],
 		parameters: MASTRA_AGENT_CALL_PARAMETERS,
 		async execute(
-			_toolCallId: string,
+			toolCallId: string,
 			params: MastraAgentCallInput,
 			signal?: AbortSignal,
 			onUpdate?: AgentToolUpdateCallback<MastraAgentCallDetails>,
 		): Promise<AgentToolResult<MastraAgentCallDetails>> {
 			const details = createInitialDetails(params);
 			const request = createStreamRequest(params, details.threadId, details.resourceId);
+			const emitUpdate = () => {
+				details.updatedAt = Date.now();
+				activitySink?.update(toolCallId, details);
+				onUpdate?.(makeToolResult(details, params));
+			};
 
-			onUpdate?.(makeToolResult(details, params));
+			activitySink?.start(toolCallId, params, details);
+			emitUpdate();
 
 			try {
 				for await (const chunk of client.streamAgent(params.agentId, request, { signal, timeoutMs: params.timeoutMs })) {
 					applyNormalizedEvent(details, normalizeMastraChunk(chunk));
-					onUpdate?.(makeToolResult(details, params));
+					emitUpdate();
 				}
 
 				if (details.status === "running") details.status = "done";
+				details.updatedAt = Date.now();
+				details.completedAt = details.completedAt ?? details.updatedAt;
+				activitySink?.finish(toolCallId, details);
 				return makeToolResult(details, params);
 			} catch (error) {
 				details.status = signal?.aborted ? "aborted" : "error";
+				details.updatedAt = Date.now();
+				details.completedAt = details.updatedAt;
 				details.errors.push(error instanceof Error ? error.message : String(error));
+				activitySink?.finish(toolCallId, details);
 				return makeToolResult(details, params);
 			}
 		},
@@ -129,14 +147,7 @@ export function createMastraAgentTool(client = new MastraHttpClient()) {
 			return new Text(`${theme.fg("toolTitle", theme.bold("mastra "))}${theme.fg("accent", args.agentId)}${mode}`, 0, 0);
 		},
 		renderResult(result: AgentToolResult<MastraAgentCallDetails>, options: { expanded?: boolean; isPartial?: boolean }, theme: any) {
-			const details = result.details;
-			const status = options.isPartial ? "running" : details.status;
-			const toolCount = details.toolCalls.length + details.toolResults.length;
-			let text = `${theme.fg(status === "error" ? "error" : "success", status)} ${theme.fg("dim", `${toolCount} tool events`)}`;
-			if (details.chunksTruncated) text += theme.fg("warning", " truncated");
-			if (details.text) text += `\n${theme.fg("muted", tail(details.text, options.expanded ? 2000 : 500))}`;
-			if (details.errors.length > 0) text += `\n${theme.fg("error", details.errors.join("; "))}`;
-			return new Text(text, 0, 0);
+			return new MastraAgentCard(result.details, options, theme);
 		},
 	};
 }
@@ -410,12 +421,15 @@ export function createWorkflowStreamRequest(params: MastraWorkflowCallInput): Ma
 
 function createInitialDetails(params: MastraAgentCallInput): MastraAgentCallDetails {
 	const resourceId = params.resourceId ?? defaultResourceId();
+	const now = Date.now();
 	return {
 		agentId: params.agentId,
 		modeId: params.modeId,
 		threadId: params.threadId ?? defaultThreadId(params.agentId),
 		resourceId,
 		status: "running",
+		startedAt: now,
+		updatedAt: now,
 		text: "",
 		toolCalls: [],
 		toolResults: [],

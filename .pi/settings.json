@@ -1,0 +1,5 @@
+{
+  "extensions": [
+    "../pi/src/extensions/index.ts"
+  ]
+}

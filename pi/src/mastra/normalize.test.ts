@@ -10,6 +10,14 @@ test("normalizes and applies text deltas", () => {
 	assert.equal(details.text, "hello world");
 });
 
+test("normalizes payload text deltas from current Mastra streams", () => {
+	const details = makeDetails();
+	applyNormalizedEvent(details, normalizeMastraChunk({ type: "text-delta", payload: { text: "hello" } }));
+	applyNormalizedEvent(details, normalizeMastraChunk({ type: "reasoning-delta", payload: { text: "why" } }));
+	assert.equal(details.text, "hello");
+	assert.equal(details.reasoning, "why");
+});
+
 test("normalizes tool lifecycle events", () => {
 	const details = makeDetails();
 	applyNormalizedEvent(details, normalizeMastraChunk({ type: "tool-call", toolCallId: "1", toolName: "read", args: { path: "x" } }));
@@ -18,6 +26,35 @@ test("normalizes tool lifecycle events", () => {
 	assert.equal(details.toolCalls.length, 1);
 	assert.equal(details.toolResults.length, 2);
 	assert.equal(details.toolResults[1].type, "error");
+});
+
+test("normalizes payload-wrapped tool params from current Mastra streams", () => {
+	const details = makeDetails();
+	applyNormalizedEvent(
+		details,
+		normalizeMastraChunk({
+			type: "tool-call",
+			payload: {
+				toolCallId: "1",
+				toolName: "mastra_workspace_list_files",
+				args: { path: ".", maxDepth: 1 },
+			},
+		}),
+	);
+	applyNormalizedEvent(
+		details,
+		normalizeMastraChunk({
+			type: "tool-result",
+			payload: {
+				toolCallId: "1",
+				toolName: "mastra_workspace_list_files",
+				result: "ok",
+			},
+		}),
+	);
+	assert.equal(details.toolCalls[0].name, "mastra_workspace_list_files");
+	assert.deepEqual(details.toolCalls[0].args, { path: ".", maxDepth: 1 });
+	assert.equal(details.toolResults[0].result, "ok");
 });
 
 test("sets final status and usage on finish", () => {
@@ -55,4 +92,3 @@ function makeDetails(): MastraAgentCallDetails {
 		rawChunkCount: 0,
 	};
 }
-

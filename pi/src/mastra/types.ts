@@ -197,6 +197,9 @@ export interface MastraAgentCallDetails {
 	threadId: string;
 	resourceId: string;
 	status: MastraStreamStatus;
+	startedAt?: number;
+	updatedAt?: number;
+	completedAt?: number;
 	text: string;
 	reasoning?: string;
 	toolCalls: MastraToolEvent[];

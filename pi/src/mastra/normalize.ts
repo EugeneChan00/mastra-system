@@ -44,6 +44,7 @@ export function normalizeMastraChunk(chunk: unknown): NormalizedMastraEvent {
 
 export function applyNormalizedEvent(details: MastraAgentCallDetails, event: NormalizedMastraEvent): void {
 	details.rawChunkCount += 1;
+	details.updatedAt = Date.now();
 
 	if (event.kind === "text-delta") {
 		details.text = boundedAppend(details.text, event.text, DEFAULT_DETAILS_TEXT_LIMIT);
@@ -66,12 +67,14 @@ export function applyNormalizedEvent(details: MastraAgentCallDetails, event: Nor
 
 	if (event.kind === "finish") {
 		details.status = "done";
+		details.completedAt = details.updatedAt;
 		if (event.usage) details.usage = event.usage;
 		return;
 	}
 
 	if (event.kind === "error") {
 		details.status = "error";
+		details.completedAt = details.updatedAt;
 		details.errors.push(event.message);
 	}
 }
@@ -90,13 +93,14 @@ export function truncateText(text: string, limit: number): TruncatedText {
 }
 
 function makeToolEvent(type: MastraToolEvent["type"], chunk: Record<string, unknown>): MastraToolEvent {
+	const source = isRecord(chunk.payload) ? chunk.payload : chunk;
 	return {
-		id: stringValue(chunk.toolCallId) ?? stringValue(chunk.id),
-		name: stringValue(chunk.toolName) ?? stringValue(chunk.toolNameId) ?? stringValue(chunk.name),
+		id: stringValue(source.toolCallId) ?? stringValue(source.id),
+		name: stringValue(source.toolName) ?? stringValue(source.toolNameId) ?? stringValue(source.name),
 		type,
-		args: chunk.args ?? chunk.input ?? chunk.arguments,
-		result: chunk.result ?? chunk.output,
-		error: chunk.error,
+		args: source.args ?? source.input ?? source.arguments ?? source.argsTextDelta,
+		result: source.result ?? source.output,
+		error: source.error,
 		timestamp: Date.now(),
 		raw: chunk,
 	};
@@ -112,6 +116,9 @@ function textFrom(chunk: Record<string, unknown>, ...keys: string[]): string {
 		const value = chunk[key];
 		if (typeof value === "string") return value;
 		if (isRecord(value) && typeof value.text === "string") return value.text;
+	}
+	if (isRecord(chunk.payload)) {
+		return textFrom(chunk.payload, ...keys);
 	}
 	return "";
 }
@@ -134,4 +141,3 @@ function pushBounded<T>(array: T[], value: T, limit: number): void {
 	array.push(value);
 	if (array.length > limit) array.splice(0, array.length - limit);
 }
-

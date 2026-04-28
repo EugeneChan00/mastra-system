@@ -1,12 +1,16 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { MASTRA_STATUS_KEY } from "../const.js";
 import { MastraHttpClient, createMastraTools } from "../mastra/index.js";
+import { MastraAgentActivityStore, MastraAgentsWidget } from "../tui/index.js";
 import type { MastraAgentInfo, MastraWorkflowInfo, MastraWorkflowRun } from "../mastra/index.js";
 
 export default function mastraPiExtension(pi: ExtensionAPI) {
 	const client = new MastraHttpClient();
+	const activityStore = new MastraAgentActivityStore();
+	let unsubscribeActivityStatus: (() => void) | undefined;
+	let statusLabel = "offline";
 
-	for (const tool of createMastraTools(client)) {
+	for (const tool of createMastraTools(client, { agentActivitySink: activityStore })) {
 		pi.registerTool(tool as any);
 	}
 
@@ -48,12 +52,28 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		unsubscribeActivityStatus?.();
+		if (ctx.hasUI) {
+			ctx.ui.setWidget("mastra-agents", (tui, theme) => new MastraAgentsWidget(tui, theme, activityStore), { placement: "aboveEditor" });
+		}
+		unsubscribeActivityStatus = activityStore.subscribe(() => {
+			const running = activityStore.snapshot({ includeFinished: false }).length;
+			ctx.ui.setStatus(MASTRA_STATUS_KEY, running > 0 ? `mastra: ${running} running` : `mastra: ${statusLabel}`);
+		});
+
 		try {
 			const [agents, workflows] = await Promise.all([client.listAgents(), client.listWorkflows()]);
-			ctx.ui.setStatus(MASTRA_STATUS_KEY, `mastra: ${Object.keys(agents).length} agents, ${Object.keys(workflows).length} workflows`);
+			statusLabel = `${Object.keys(agents).length} agents, ${Object.keys(workflows).length} workflows`;
+			if (activityStore.snapshot({ includeFinished: false }).length === 0) ctx.ui.setStatus(MASTRA_STATUS_KEY, `mastra: ${statusLabel}`);
 		} catch {
+			statusLabel = "offline";
 			ctx.ui.setStatus(MASTRA_STATUS_KEY, "mastra: offline");
 		}
+	});
+
+	pi.on("session_shutdown", async () => {
+		unsubscribeActivityStatus?.();
+		unsubscribeActivityStatus = undefined;
 	});
 }
 
