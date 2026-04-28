@@ -1,0 +1,15 @@
+{
+  "name": "mastra-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "mastra-code",
+    "mastra-agents",
+    "pi",
+    "paseo"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck -w mastra-agents && npm run typecheck -w pi && npm run typecheck -w paseo"
+  }
+}
