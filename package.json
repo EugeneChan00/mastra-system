@@ -11,5 +11,8 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck -w mastra-agents && npm run typecheck -w pi && npm run typecheck -w paseo"
+  },
+  "dependencies": {
+    "json": "*"
   }
 }

@@ -13,17 +13,17 @@
     "studio": "mastra studio"
   },
   "dependencies": {
-    "@mastra/core": "^1.28.0",
-    "@mastra/memory": "^1.17.1",
-    "@mastra/pg": "^1.9.2",
-    "@mastra/duckdb": "^1.2.0",
-    "@mastra/evals": "^1.2.1",
-    "@mastra/observability": "^1.10.0",
+    "@mastra/core": "1.28.0",
+    "@mastra/memory": "1.17.1",
+    "@mastra/pg": "1.9.2",
+    "@mastra/duckdb": "1.2.0",
+    "@mastra/evals": "1.2.1",
+    "@mastra/observability": "1.10.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "mastra": "^1.6.3",
+    "mastra": "1.6.3",
     "typescript": "^6.0.3"
   }
 }
