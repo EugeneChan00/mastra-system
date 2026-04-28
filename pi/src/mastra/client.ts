@@ -1,6 +1,23 @@
-import { DEFAULT_STREAM_TIMEOUT_MS, agentsPath, agentStreamPath } from "../const.js";
+import {
+	DEFAULT_STREAM_TIMEOUT_MS,
+	agentPath,
+	agentsPath,
+	agentStreamPath,
+	workflowPath,
+	workflowRunPath,
+	workflowsPath,
+	workflowStreamPath,
+} from "../const.js";
 import { parseSseDataEvents, parseSseJsonData } from "./sse.js";
-import type { MastraAgentsResponse, MastraStreamRequest } from "./types.js";
+import type {
+	MastraAgentInfo,
+	MastraAgentsResponse,
+	MastraStreamRequest,
+	MastraWorkflowInfo,
+	MastraWorkflowRun,
+	MastraWorkflowStreamRequest,
+	MastraWorkflowsResponse,
+} from "./types.js";
 import { joinMastraPath, normalizeMastraBaseUrl } from "./url.js";
 
 export interface MastraHttpClientOptions {
@@ -18,20 +35,65 @@ export class MastraHttpClient {
 	}
 
 	async listAgents(signal?: AbortSignal): Promise<MastraAgentsResponse> {
-		const response = await this.fetchImpl(joinMastraPath(this.baseUrl, agentsPath()), {
-			headers: { accept: "application/json" },
-			signal,
-		});
-
-		if (!response.ok) {
-			throw new Error(`Mastra agents request failed: ${response.status} ${response.statusText}`);
-		}
-
-		const body = (await response.json()) as unknown;
-		if (!body || typeof body !== "object" || Array.isArray(body)) {
+		const body = await this.getJson(agentsPath({ partial: true }), "Mastra agents request failed", signal);
+		if (!isRecord(body)) {
 			throw new Error("Mastra agents response was not an object");
 		}
 		return body as MastraAgentsResponse;
+	}
+
+	async getAgent(agentId: string, signal?: AbortSignal): Promise<MastraAgentInfo> {
+		const body = await this.getJson(agentPath(agentId), "Mastra agent request failed", signal);
+		if (!isRecord(body)) {
+			throw new Error("Mastra agent response was not an object");
+		}
+		return body as MastraAgentInfo;
+	}
+
+	async listWorkflows(signal?: AbortSignal): Promise<MastraWorkflowsResponse> {
+		const body = await this.getJson(workflowsPath({ partial: true }), "Mastra workflows request failed", signal);
+		if (!isRecord(body)) {
+			throw new Error("Mastra workflows response was not an object");
+		}
+		return body as MastraWorkflowsResponse;
+	}
+
+	async getWorkflow(workflowId: string, signal?: AbortSignal): Promise<MastraWorkflowInfo> {
+		const body = await this.getJson(workflowPath(workflowId), "Mastra workflow request failed", signal);
+		if (!isRecord(body)) {
+			throw new Error("Mastra workflow response was not an object");
+		}
+		return body as MastraWorkflowInfo;
+	}
+
+	async getWorkflowRun(
+		workflowId: string,
+		runId: string,
+		options: { fields?: string | string[]; withNestedWorkflows?: boolean; signal?: AbortSignal } = {},
+	): Promise<MastraWorkflowRun> {
+		const body = await this.getJson(
+			workflowRunPath(workflowId, runId, { fields: options.fields, withNestedWorkflows: options.withNestedWorkflows }),
+			"Mastra workflow run request failed",
+			options.signal,
+		);
+		if (!isRecord(body)) {
+			throw new Error("Mastra workflow run response was not an object");
+		}
+		return body as MastraWorkflowRun;
+	}
+
+	async *streamWorkflow(
+		workflowId: string,
+		runId: string,
+		payload: MastraWorkflowStreamRequest,
+		options: { signal?: AbortSignal; timeoutMs?: number } = {},
+	): AsyncGenerator<unknown> {
+		yield* this.streamJsonEvents(
+			workflowStreamPath(workflowId, runId),
+			payload,
+			"Mastra workflow stream request failed",
+			options,
+		);
 	}
 
 	async *streamAgent(
@@ -39,13 +101,40 @@ export class MastraHttpClient {
 		payload: MastraStreamRequest,
 		options: { signal?: AbortSignal; timeoutMs?: number } = {},
 	): AsyncGenerator<unknown> {
+		yield* this.streamJsonEvents(agentStreamPath(agentId), payload, "Mastra stream request failed", options);
+	}
+
+	private async getJson(path: string, errorPrefix: string, signal?: AbortSignal): Promise<unknown> {
+		const response = await this.fetchImpl(joinMastraPath(this.baseUrl, path), {
+			headers: { accept: "application/json" },
+			signal,
+		});
+
+		if (!response.ok) {
+			throw new Error(`${errorPrefix}: ${response.status} ${response.statusText}`);
+		}
+
+		return (await response.json()) as unknown;
+	}
+
+	private async *streamJsonEvents(
+		path: string,
+		payload: unknown,
+		errorPrefix: string,
+		options: { signal?: AbortSignal; timeoutMs?: number } = {},
+	): AsyncGenerator<unknown> {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(new Error("Mastra stream timed out")), options.timeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS);
 		const abortListener = () => controller.abort(options.signal?.reason);
-		options.signal?.addEventListener("abort", abortListener, { once: true });
+		if (options.signal?.aborted) {
+			controller.abort(options.signal.reason);
+		} else {
+			options.signal?.addEventListener("abort", abortListener, { once: true });
+		}
 
 		try {
-			const response = await this.fetchImpl(joinMastraPath(this.baseUrl, agentStreamPath(agentId)), {
+			controller.signal.throwIfAborted();
+			const response = await this.fetchImpl(joinMastraPath(this.baseUrl, path), {
 				method: "POST",
 				headers: {
 					accept: "text/event-stream",
@@ -56,10 +145,10 @@ export class MastraHttpClient {
 			});
 
 			if (!response.ok) {
-				throw new Error(`Mastra stream request failed: ${response.status} ${response.statusText}: ${await response.text()}`);
+				throw new Error(`${errorPrefix}: ${response.status} ${response.statusText}: ${await response.text()}`);
 			}
 			if (!response.body) {
-				throw new Error("Mastra stream response did not include a body");
+				throw new Error(`${errorPrefix}: response did not include a body`);
 			}
 
 			for await (const event of parseSseDataEvents(response.body)) {
@@ -73,3 +162,6 @@ export class MastraHttpClient {
 	}
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}

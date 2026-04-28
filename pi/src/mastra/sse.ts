@@ -27,7 +27,8 @@ export async function* parseSseDataEvents(stream: ReadableStream<Uint8Array>): A
 
 	buffer += decoder.decode();
 	if (buffer.trim().length > 0) {
-		yield parseSseEvent(buffer);
+		const event = parseSseEvent(buffer);
+		if (event) yield event;
 	}
 }
 
@@ -40,7 +41,8 @@ export function parseSseText(input: string): SseDataEvent[] {
 		events.push(event);
 	}
 	if (buffer.trim().length > 0) {
-		events.push(parseSseEvent(buffer));
+		const event = parseSseEvent(buffer);
+		if (event) events.push(event);
 	}
 	return events;
 }
@@ -56,14 +58,15 @@ function* drainCompleteEvents(input: string, setRemaining: (remaining: string) =
 		const block = normalized.slice(cursor, boundary);
 		cursor = boundary + 2;
 		if (block.trim().length > 0) {
-			yield parseSseEvent(block);
+			const event = parseSseEvent(block);
+			if (event) yield event;
 		}
 	}
 
 	setRemaining(normalized.slice(cursor));
 }
 
-function parseSseEvent(block: string): SseDataEvent {
+function parseSseEvent(block: string): SseDataEvent | undefined {
 	const data: string[] = [];
 	let event: string | undefined;
 	let id: string | undefined;
@@ -80,6 +83,7 @@ function parseSseEvent(block: string): SseDataEvent {
 		if (field === "id") id = value;
 	}
 
+	if (data.length === 0) return undefined;
 	return { data: data.join("\n"), event, id };
 }
 
@@ -92,4 +96,3 @@ export function parseSseJsonData(data: string): unknown {
 		throw new SseParseError(`Invalid SSE JSON data: ${message}`, data);
 	}
 }
-

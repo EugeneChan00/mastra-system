@@ -18,6 +18,14 @@ test("parses multiline data", () => {
 	]);
 });
 
+test("skips comment-only heartbeat frames", () => {
+	assert.deepEqual(parseSseText(": ping\n\n"), []);
+});
+
+test("skips event/id-only frames without data", () => {
+	assert.deepEqual(parseSseText("event: keepalive\nid: 123\n\n"), []);
+});
+
 test("accepts DONE sentinel", () => {
 	assert.equal(parseSseJsonData("[DONE]"), "[DONE]");
 });
@@ -25,4 +33,3 @@ test("accepts DONE sentinel", () => {
 test("throws structured parse error for invalid JSON", () => {
 	assert.throws(() => parseSseJsonData("{"), SseParseError);
 });
-
