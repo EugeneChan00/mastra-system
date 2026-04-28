@@ -1,136 +1,202 @@
-import { Daytona, type DaytonaSandboxOptions } from "@daytona/sdk";
-import { Logger } from "@mastra/core/logger";
+import { Daytona, type Resources, type VolumeMount } from "@daytona/sdk";
+import { DaytonaSandbox, type DaytonaSandboxOptions } from "@mastra/daytona";
 
-import {
-  resolveDaytonaVolumeMounts,
-  resolveSandboxCreationEnv,
-  resolveSandboxRuntimeEnv,
-} from "./sandbox-config.js";
+import { resolveSandboxCreationEnv } from "./sandbox-config";
 
-function waitForStableStateAndStart(daytona: Daytona, sandbox: { id: string }): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error(`Sandbox ${sandbox.id} did not reach stable state in time`)),
-      300_000,
-    );
+type DaytonaClient = Daytona;
+type DaytonaSandboxInstance = Awaited<ReturnType<DaytonaClient["create"]>>;
+type DaytonaCreateParams = NonNullable<Parameters<DaytonaClient["create"]>[0]>;
 
-    const check = async () => {
-      try {
-        const s = await daytona.get(sandbox.id);
-        const state = s.state;
+type DaytonaSandboxInternals = {
+  id: string;
+  logger: {
+    debug: (...args: unknown[]) => void;
+  };
+  mounts: {
+    entries: Map<string, unknown>;
+  };
+  _daytona: DaytonaClient | null;
+  _sandbox: DaytonaSandboxInstance | null;
+  _createdAt: Date | null;
+  _workingDir: string | null;
+  _daytonaSandboxId?: string;
+  language: "typescript" | "javascript" | "python";
+  labels: Record<string, string>;
+  snapshotId?: string;
+  image?: string;
+  resources?: Resources;
+  ephemeral: boolean;
+  autoStopInterval?: number;
+  autoArchiveInterval?: number;
+  autoDeleteInterval?: number;
+  volumeConfigs: VolumeMount[];
+  sandboxName?: string;
+  sandboxUser?: string;
+  sandboxPublic?: boolean;
+  networkBlockAll?: boolean;
+  networkAllowList?: string;
+  connectionOpts: ConstructorParameters<typeof Daytona>[0];
+  detectWorkingDir(): Promise<void>;
+  reconcileMounts(expectedMountPaths: string[]): Promise<void>;
+};
 
-        if (state === "started") {
-          clearTimeout(timeout);
-          resolve();
-        } else if (["stopped", "error", "failed"].includes(state ?? "")) {
-          clearTimeout(timeout);
-          reject(new Error(`Sandbox ${sandbox.id} entered unexpected state: ${state}`));
-        } else {
-          setTimeout(check, 2000);
-        }
-      } catch (err) {
-        clearTimeout(timeout);
-        reject(err);
-      }
-    };
+const deadStates = new Set(["destroyed", "destroying", "error", "build_failed"]);
+const transitionalStates = new Set([
+  "starting",
+  "stopping",
+  "creating",
+  "restoring",
+  "archiving",
+  "resizing",
+  "pulling_snapshot",
+  "building_snapshot",
+]);
 
-    setTimeout(check, 2000);
-  });
+function compact<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined)) as Partial<T>;
 }
 
-function sandboxState(sandbox: { state?: string | null }): string {
-  return sandbox.state ?? "unknown";
+function isNotFoundError(error: unknown) {
+  if (error instanceof Error) {
+    return /not found/i.test(error.message);
+  }
+
+  return /not found/i.test(String(error));
 }
 
-const deadStates = new Set(["stopped", "failed", "error", "unknown"]);
+function sandboxState(sandbox: { state?: unknown }) {
+  return String(sandbox.state ?? "").toLowerCase();
+}
 
-export class DaytonaAgentsDaytonaSandbox {
-  private _daytona: Daytona;
-  private _options: DaytonaSandboxOptions;
-  private logger: Logger;
+async function waitForStableStateAndStart(client: DaytonaClient, sandbox: DaytonaSandboxInstance) {
+  const maxWaitMs = 120_000;
+  const pollIntervalMs = 2_000;
+  const deadline = Date.now() + maxWaitMs;
+  let current = sandbox;
 
-  constructor(options: DaytonaSandboxOptions) {
-    this._options = options;
-    this.logger = new Logger({ name: "mastrasystem-daytona-sandbox" });
-
-    if (!options.apiKey) {
-      this.logger.warn("DAYTONA_API_KEY not set — Daytona sandbox operations will fail");
-    }
-
-    this._daytona = new Daytona({
-      apiKey: options.apiKey ?? "",
-      apiUrl: options.apiUrl ?? "http://daytona-api:3000/api",
-    });
+  while (transitionalStates.has(sandboxState(current)) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    current = await client.get(current.id);
   }
 
-  get id() {
-    return this._options.id;
+  if (sandboxState(current) === "started") {
+    Object.assign(sandbox, current);
+    return;
   }
 
-  get started() {
-    return this._daytona;
-  }
-
-  async getOrCreateSandbox(): Promise<{ id: string }> {
-    const id = this._options.id;
-    const snapshot = this._options.snapshot;
-    const language = this._options.language;
-    const apiKey = this._options.apiKey ?? process.env.DAYTONA_API_KEY;
-
-    if (!apiKey) {
-      throw new Error("DAYTONA_API_KEY is required to get or create a Daytona sandbox.");
-    }
-
-    const daytona = this._daytona;
-
-    let sandbox: { id: string; state?: string | null };
-
+  while (Date.now() < deadline) {
     try {
-      sandbox = await daytona.get(id);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      if (message.includes("not found") || message.includes("404")) {
-        this.logger.debug(`Sandbox ${id} not found, creating from snapshot ${snapshot}`);
-        const volumes = resolveDaytonaVolumeMounts();
-        sandbox = await daytona.create({
-          snapshot,
-          language,
-          envVars: resolveSandboxCreationEnv(),
-          autoStopInterval: this._options.autoStopInterval,
-          ephemeral: this._options.ephemeral,
-          volumes: volumes.length > 0 ? volumes : undefined,
-          labels: this._options.labels,
-        });
-      } else {
+      await client.start(current);
+      Object.assign(sandbox, await client.get(current.id));
+      return;
+    } catch (error) {
+      if (!String(error).includes("State change in progress")) {
         throw error;
       }
+
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      current = await client.get(current.id);
+      if (sandboxState(current) === "started") {
+        Object.assign(sandbox, current);
+        return;
+      }
+    }
+  }
+
+  await client.start(current);
+  Object.assign(sandbox, await client.get(current.id));
+}
+
+export class DaytonaAgentsDaytonaSandbox extends DaytonaSandbox {
+  async start() {
+    const self = this as unknown as DaytonaSandboxInternals;
+
+    if (self._sandbox) {
+      return;
+    }
+
+    if (!self._daytona) {
+      self._daytona = new Daytona(self.connectionOpts);
+    }
+
+    const existing = await this.findExistingSandboxWithCreationEnv(self);
+    if (existing) {
+      self._sandbox = existing;
+      self._daytonaSandboxId = existing.id;
+      self._createdAt = existing.createdAt ? new Date(existing.createdAt) : new Date();
+      self.logger.debug(`[@mastra/daytona] Reconnected to existing sandbox ${existing.id} for: ${self.id}`);
+      await self.reconcileMounts(Array.from(self.mounts.entries.keys()));
+      await self.detectWorkingDir();
+      return;
+    }
+
+    self.logger.debug(`[@mastra/daytona] Creating sandbox for: ${self.id}`);
+    const baseParams = compact({
+      language: self.language,
+      labels: { ...self.labels, "mastra-sandbox-id": self.id },
+      envVars: resolveSandboxCreationEnv(),
+      ephemeral: self.ephemeral,
+      autoStopInterval: self.autoStopInterval,
+      autoArchiveInterval: self.autoArchiveInterval,
+      autoDeleteInterval: self.autoDeleteInterval,
+      volumes: self.volumeConfigs.length > 0 ? self.volumeConfigs : undefined,
+      name: self.sandboxName,
+      user: self.sandboxUser,
+      public: self.sandboxPublic,
+      networkBlockAll: self.networkBlockAll,
+      networkAllowList: self.networkAllowList,
+    });
+    const createParams = self.image && !self.snapshotId
+      ? compact({
+        ...baseParams,
+        image: self.image,
+        resources: self.resources,
+      })
+      : compact({
+        ...baseParams,
+        snapshot: self.snapshotId,
+      });
+
+    self._sandbox = await self._daytona.create(createParams as DaytonaCreateParams);
+    self._daytonaSandboxId = self._sandbox.id;
+    self.logger.debug(`[@mastra/daytona] Created sandbox ${self._sandbox.id} for logical ID: ${self.id}`);
+    self._createdAt = new Date();
+    await self.detectWorkingDir();
+  }
+
+  private async findExistingSandboxWithCreationEnv(self: DaytonaSandboxInternals) {
+    const lookupKey = self._daytonaSandboxId ?? self.sandboxName;
+    if (!lookupKey || !self._daytona) {
+      return null;
+    }
+
+    let sandbox: DaytonaSandboxInstance;
+    try {
+      sandbox = await self._daytona.get(lookupKey);
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        self._daytonaSandboxId = undefined;
+        return null;
+      }
+
+      throw error;
     }
 
     const state = sandboxState(sandbox);
     if (deadStates.has(state)) {
-      this.logger.debug(`Existing sandbox ${sandbox.id} is dead (${state}), deleting and creating fresh`);
+      self.logger.debug(`[@mastra/daytona] Existing sandbox ${sandbox.id} is dead (${state}), deleting and creating fresh`);
       try {
-        await daytona.delete(sandbox);
+        await self._daytona.delete(sandbox);
       } catch {
-        // Ignore cleanup errors.
+        // Ignore cleanup errors and let the next create attempt surface any real issue.
       }
 
-      const volumes = resolveDaytonaVolumeMounts();
-      sandbox = await daytona.create({
-        snapshot,
-        language,
-        envVars: resolveSandboxCreationEnv(),
-        autoStopInterval: this._options.autoStopInterval,
-        ephemeral: this._options.ephemeral,
-        volumes: volumes.length > 0 ? volumes : undefined,
-        labels: this._options.labels,
-      });
+      return null;
     }
 
     if (state !== "started") {
-      this.logger.debug(`Restarting sandbox ${sandbox.id} (state: ${state})`);
-      await waitForStableStateAndStart(daytona, sandbox);
+      self.logger.debug(`[@mastra/daytona] Restarting sandbox ${sandbox.id} (state: ${state})`);
+      await waitForStableStateAndStart(self._daytona, sandbox);
     }
 
     return sandbox;

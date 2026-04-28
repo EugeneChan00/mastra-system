@@ -1,6 +1,8 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 
+import { workspace } from "../workspace";
+
 const workspaceSmokeStep = createStep({
   id: "workspace-smoke",
   inputSchema: z.object({}),
@@ -25,8 +27,18 @@ const workspaceSmokeStep = createStep({
       "printf 'sandbox-secret-env='",
       "node -e \"console.log(Boolean(process.env.OPENAI_API_KEY), Boolean(process.env.ANTHROPIC_API_KEY), Boolean(process.env.GITHUB_TOKEN), Boolean(process.env.CLI_PROXY_API_KEY))\"",
     ].join("\n");
+    const result = await workspace.sandbox.executeCommand?.("bash", [
+      "-lc",
+      smokeScript,
+    ]);
 
-    const result = { stdout: "workspace smoke: no sandbox available", stderr: "", exitCode: 1 };
+    if (!result) {
+      return {
+        status: "error" as const,
+        stdout: "",
+        stderr: "Workspace sandbox does not expose executeCommand.",
+      };
+    }
 
     return {
       status: result.exitCode === 0 ? ("ok" as const) : ("error" as const),

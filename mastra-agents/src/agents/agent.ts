@@ -1,16 +1,16 @@
 import { Agent } from "@mastra/core/agent";
 
-import { daytonaTools } from "../tools/daytona.js";
-import { workspaceTools } from "../tools/workspace.js";
-import { advisorAgent } from "./advisor-agent.js";
-import { architectAgent } from "./architect-agent.js";
-import { controlAgent } from "./control-agent.js";
-import { developerAgent } from "./developer-agent.js";
-import { supervisorOperatingPrompt } from "./prompts.js";
-import { researcherAgent } from "./researcher-agent.js";
-import { scoutAgent } from "./scout-agent.js";
-import { agentDefaultOptions, createAgentMemory, defaultSupervisorModel } from "./shared.js";
-import { validatorAgent } from "./validator-agent.js";
+import { daytonaTools } from "../tools/daytona";
+import { workspaceTools } from "../tools/workspace";
+import { advisorAgent } from "./advisor-agent";
+import { architectAgent } from "./architect-agent";
+import { controlAgent } from "./control-agent";
+import { developerAgent } from "./developer-agent";
+import { supervisorOperatingPrompt } from "./prompts";
+import { researcherAgent } from "./researcher-agent";
+import { scoutAgent } from "./scout-agent";
+import { agentDefaultOptions, createAgentMemory, defaultSupervisorModel } from "./shared";
+import { validatorAgent } from "./validator-agent";
 
 const supervisorPrompt = `${supervisorOperatingPrompt}
 
@@ -24,9 +24,11 @@ The supervisor may delegate to these native Mastra Agent instances:
 - developerAgent: bounded implementation after write boundary and central behavior are explicit.
 - validatorAgent: read-only validation of claims, diffs, contracts, tests, and evidence.
 
-# Execution policy
+Do not describe these specialists as agents from the sibling coding harness. They are Mastra supervisor-delegated specialist agents.
 
-- Use the Mastra workspace as the normal coding environment.
+# Project-specific execution policy
+
+- Use the Daytona-backed Mastra workspace as the normal coding environment.
 - Prefer workspaceListFiles and workspaceReadFile before deciding on edits.
 - Prefer workspaceWriteFile or workspaceReplaceInFile for file changes when project-file mutation is required.
 - Use daytonaCheckApi and daytonaListSandboxes for control-plane diagnostics.
@@ -39,8 +41,8 @@ When useful, structure the final response with status, summary, facts, assumptio
 
 export const supervisorAgent = new Agent({
   id: "supervisor-agent",
-  name: "Mastra System Supervisor",
-  description: "Streaming supervisor agent that delegates to specialist Mastra agents for coding work.",
+  name: "Daytona Agents Supervisor",
+  description: "Streaming supervisor agent that delegates to specialist Mastra agents for Daytona-backed coding work.",
   instructions: supervisorPrompt,
   model: defaultSupervisorModel,
   memory: createAgentMemory(),

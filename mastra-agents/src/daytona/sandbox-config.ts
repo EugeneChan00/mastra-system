@@ -133,6 +133,11 @@ function mirrorGitHubToken(env: Record<string, string>) {
 }
 
 export function resolveDaytonaVolumeMounts(): DaytonaVolumeMount[] {
+  // Daytona owns volume attachment at sandbox creation time. Per Daytona's
+  // Volumes and Sandboxes docs, Mastra only passes volume IDs and desired
+  // in-sandbox mount paths to the sandbox create call; Daytona maps each volume
+  // to its MinIO/S3 backend storage and exposes the mounted path inside the
+  // sandbox. Do not install or invoke mount-s3/libfuse from this app layer.
   return assertUniqueMountPaths([
     ...createVolumeMount(readEnv("DAYTONA_WORKSPACE_VOLUME_ID"), "/workspace"),
     ...createVolumeMount(

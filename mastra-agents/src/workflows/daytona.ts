@@ -1,6 +1,6 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 
-import { daytonaSchemas, daytonaTools } from "../tools/daytona.js";
+import { daytonaSchemas, daytonaTools } from "../tools/daytona";
 
 const checkApiStep = createStep(daytonaTools.checkApi);
 const createCodingSandboxStep = createStep(daytonaTools.createCodingSandbox);

@@ -5,7 +5,7 @@ import { z } from "zod";
 import {
   resolveDaytonaVolumeMounts,
   resolveSandboxCreationEnv,
-} from "../../daytona/sandbox-config.js";
+} from "../../daytona/sandbox-config";
 
 const defaultSnapshot =
   process.env.MASTRA_DEFAULT_SNAPSHOT ??
@@ -144,6 +144,9 @@ export const daytonaTools = {
       const language = query.language ?? "typescript";
       const autoStopInterval = query.autoStopInterval ?? 30;
       const ephemeral = query.ephemeral ?? false;
+      // Pass the configured Daytona volume IDs/mount paths and sandbox env vars
+      // directly to Daytona. Daytona is responsible for mounting its volumes in
+      // the sandbox; this tool should not shell out to mount-s3 or manage FUSE.
       const volumes = resolveDaytonaVolumeMounts();
       const daytona = getDaytonaClient();
       const sandbox = await daytona.create({
