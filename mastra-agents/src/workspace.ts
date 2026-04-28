@@ -1,11 +1,11 @@
 import { LocalFilesystem, Workspace } from "@mastra/core/workspace";
 import path from "node:path";
 
-import { DaytonaAgentsDaytonaSandbox } from "../daytona/mastra-sandbox";
+import { DaytonaAgentsDaytonaSandbox } from "./daytona/mastra-sandbox";
 import {
   resolveDaytonaVolumeMounts,
   resolveSandboxRuntimeEnv,
-} from "../daytona/sandbox-config";
+} from "./daytona/sandbox-config";
 
 export const workspaceRoot = path.resolve(
   process.env.MASTRA_WORKSPACE_ROOT ?? path.resolve(process.cwd(), "../.."),

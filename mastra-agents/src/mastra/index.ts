@@ -12,11 +12,11 @@ import { PostgresStore } from "@mastra/pg";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
-import { mastraAgents } from "./agents/agent";
-import { controlAgentScorers } from "./scorers/control-agent";
-import { daytonaWorkflows } from "./workflows/daytona";
-import { workspaceWorkflows } from "./workflows/workspace";
-import { resolveWorkspacePath, workspace } from "./workspace";
+import { mastraAgents } from "../agents/agent";
+import { controlAgentScorers } from "../scorers/control-agent";
+import { daytonaWorkflows } from "../workflows/daytona";
+import { workspaceWorkflows } from "../workflows/workspace";
+import { resolveWorkspacePath, workspace } from "../workspace";
 
 const postgresStorage = new PostgresStore({
   id: "mastra-control-storage",

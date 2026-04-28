@@ -5,7 +5,7 @@ import { z } from "zod";
 import {
   resolveDaytonaVolumeMounts,
   resolveSandboxCreationEnv,
-} from "../../daytona/sandbox-config";
+} from "../daytona/sandbox-config";
 
 const defaultSnapshot =
   process.env.MASTRA_DEFAULT_SNAPSHOT ??
