@@ -13,7 +13,9 @@
     "studio": "mastra studio"
   },
   "dependencies": {
+    "@daytona/sdk": "0.169.0",
     "@mastra/core": "1.28.0",
+    "@mastra/daytona": "0.3.0",
     "@mastra/editor": "0.7.19",
     "@mastra/memory": "1.17.1",
     "@mastra/pg": "1.9.2",
