@@ -50,6 +50,8 @@ Supervisor + 6 specialist agents in the Daytona agents pattern (Eugenechan00/day
 **Storage:** PostgresStore + DuckDBStore + FilesystemStore (composite)  
 **Sandbox:** Auto current-sandbox LocalSandbox when already inside Daytona; DaytonaAgentsDaytonaSandbox for forced/remote Daytona workspaces
 
+See [Mastra agent calling methods](docs/mastra-agent-calling-methods.md) for Pi call surfaces, default `resourceId`/`threadId` behavior, and how to start a new conversation thread intentionally.
+
 See [daytona-agents](https://github.com/Eugenechan00/daytona-agents) for the reference implementation.
 
 ### `@mastrasystem/pi` — Pi TUI
