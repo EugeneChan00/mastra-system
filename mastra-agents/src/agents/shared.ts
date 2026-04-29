@@ -1,12 +1,30 @@
 import { Memory } from "@mastra/memory";
 import { PostgresStore } from "@mastra/pg";
 
-export const defaultAgentModel = process.env.MASTRA_AGENT_MODEL ?? process.env.MASTRA_MODEL ?? "openai/gpt-5-mini";
+export const defaultMiniMaxModel = "minimax-coding-plan/MiniMax-M2.7";
+export const defaultAgentModel =
+  process.env.MASTRA_AGENT_MODEL ?? process.env.MASTRA_SUBAGENT_MODEL ?? process.env.MASTRA_MODEL ?? defaultMiniMaxModel;
 export const defaultSupervisorModel =
-  process.env.MASTRA_SUPERVISOR_MODEL ?? process.env.MASTRA_AGENT_MODEL ?? process.env.MASTRA_MODEL ?? "openai/gpt-5-mini";
-export const defaultControlModel = process.env.MASTRA_CONTROL_MODEL ?? process.env.MASTRA_MODEL ?? defaultAgentModel;
+  process.env.MASTRA_SUPERVISOR_MODEL ??
+  process.env.MASTRA_AGENT_MODEL ??
+  process.env.MASTRA_SUBAGENT_MODEL ??
+  process.env.MASTRA_MODEL ??
+  defaultMiniMaxModel;
+export const defaultControlModel =
+  process.env.MASTRA_CONTROL_MODEL ??
+  process.env.MASTRA_AGENT_MODEL ??
+  process.env.MASTRA_SUBAGENT_MODEL ??
+  process.env.MASTRA_MODEL ??
+  defaultMiniMaxModel;
 
 const defaultToolCallConcurrency = 15;
+
+export const defaultObservationalMemoryModel =
+  process.env.MASTRA_OBSERVATIONAL_MEMORY_MODEL ?? defaultAgentModel;
+
+export const defaultObservationalMemoryOptions = {
+  model: defaultObservationalMemoryModel,
+} as const;
 
 const storage = new PostgresStore({
   id: "mastra-agent-memory",
@@ -22,6 +40,7 @@ export function createAgentMemory() {
     options: {
       lastMessages: 40,
       semanticRecall: false,
+      observationalMemory: defaultObservationalMemoryOptions,
       workingMemory: {
         enabled: true,
         scope: "resource",

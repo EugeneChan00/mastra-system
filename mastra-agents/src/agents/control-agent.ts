@@ -6,7 +6,7 @@ import { controlAgentScorerConfig } from "../scorers/control-agent";
 import { daytonaTools } from "../tools/daytona";
 import { workspaceTools } from "../tools/workspace";
 import { blockerProtocolPrompt, evidenceDisciplinePrompt } from "./prompts";
-import { agentDefaultOptions, defaultControlModel } from "./shared";
+import { agentDefaultOptions, defaultControlModel, defaultObservationalMemoryOptions } from "./shared";
 
 const storage = new PostgresStore({
   id: "mastra-control-agent-memory",
@@ -35,7 +35,7 @@ Workspace tool policy:
 - Use workspaceListFiles and workspaceReadFile for project file inspection when the user asks about repository state.
 - Use workspaceWriteFile and workspaceReplaceInFile only for explicit file edits the user requests.
 - Read existing files before modifying them.
-- Use workspace-relative paths.
+- Use relative paths for the default workspace root, or absolute paths only when they are under the configured workspace access roots such as /home/daytona, /workspace, or /shared.
 - Prefer exact text replacement for small edits.
 - Do not silently perform broad refactors, formatting sweeps, or unrelated rewrites.
 
@@ -48,7 +48,7 @@ Workspace vs control-plane boundary:
 
 Memory discipline:
 - Persistent state comes from PostgreSQL-backed Mastra storage.
-- This control agent retains only a short conversational window, has semantic recall disabled, and has working memory disabled.
+- This control agent retains a short raw conversational window, uses observational memory for long-running context, has semantic recall disabled, and has working memory disabled.
 - Do not claim to remember prior sessions beyond exposed conversation context or tool-accessible state.
 - Surface uncertainty when thread context is missing.
 
@@ -82,6 +82,7 @@ export const controlAgent = new Agent({
     options: {
       lastMessages: 20,
       semanticRecall: false,
+      observationalMemory: defaultObservationalMemoryOptions,
       workingMemory: {
         enabled: false,
       },
@@ -93,9 +94,9 @@ export const controlAgent = new Agent({
     daytonaCheckApi: daytonaTools.checkApi,
     daytonaCreateCodingSandbox: daytonaTools.createCodingSandbox,
     daytonaListSandboxes: daytonaTools.listSandboxes,
-    workspaceListFiles: workspaceTools.listFiles,
-    workspaceReadFile: workspaceTools.readFile,
-    workspaceWriteFile: workspaceTools.writeFile,
-    workspaceReplaceInFile: workspaceTools.replaceInFile,
+    list_files: workspaceTools.listFiles,
+    read_file: workspaceTools.readFile,
+    write_file: workspaceTools.writeFile,
+    edit_file: workspaceTools.replaceInFile,
   },
 });

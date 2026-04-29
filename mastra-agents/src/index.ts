@@ -13,4 +13,4 @@ export * from './workflows/index.js';
 export * from './scorers/index.js';
 export * from './daytona/index.js';
 export { mastra } from './mastra/index.js';
-export { workspace, workspaceRoot } from './workspace.js';
+export { workspace, workspaceAccessRoots, workspaceCommandCwd, workspaceRoot } from './workspace.js';
