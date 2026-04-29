@@ -3,7 +3,13 @@ import type { Component, TUI as PiTUI } from "@mariozechner/pi-tui";
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import type { MastraAgentCallDetails, MastraAgentCallInput, MastraToolEvent, MastraUsage } from "../mastra/types.js";
 
-const DEFAULT_WIDGET_MAX_LINES = 10;
+// Pi only gives extensions above/below-editor widget slots. The Mastra
+// activity surface uses the above-editor slot, so this line budget keeps live
+// async cards visible without pushing the prompt editor off screen.
+const DEFAULT_WIDGET_MAX_LINES = 28;
+// Show the two most relevant jobs directly. Extra jobs stay discoverable via
+// the overflow row and status/read tools instead of rendering partial cards.
+const DEFAULT_WIDGET_MAX_CARDS = 2;
 const COLLAPSED_CARD_BODY_LINES = 18;
 const EXPANDED_CARD_BODY_LINES = 48; // 50 total lines including top/bottom borders.
 const COLLAPSED_PROMPT_LINES = 3;
@@ -41,6 +47,14 @@ export interface MastraAgentActivity {
 	toolResults: number;
 	usage?: MastraUsage;
 	errors: string[];
+	/**
+	 * Full details snapshot for MastraAgentCard rendering.
+	 *
+	 * The summary fields above keep status/footer rendering cheap, while this
+	 * snapshot carries the text/tool arrays needed to reuse the same rich card
+	 * renderer used by synchronous `mastra_agent_call` results.
+	 */
+	details: MastraAgentCallDetails;
 }
 
 export interface MastraAgentActivitySink {
@@ -116,7 +130,14 @@ export class MastraAgentActivityStore implements MastraAgentActivitySink {
 }
 
 export interface MastraAgentsWidgetOptions {
+	/** Overall widget height budget in Pi's above-editor slot. */
 	maxLines?: number;
+	/** Number of live/lingering async jobs rendered as full cards. */
+	maxCards?: number;
+	/** Card width before right-padding; controls the bottom-right visual anchor. */
+	cardWidth?: number;
+	/** Optional fixed body height per card; otherwise derived from maxLines. */
+	cardBodyLines?: number;
 }
 
 export class MastraAgentsWidget implements Component {
@@ -140,15 +161,60 @@ export class MastraAgentsWidget implements Component {
 		const activities = this.store.snapshot();
 		if (activities.length === 0) return [];
 
-		const maxLines = Math.max(3, this.options.maxLines ?? DEFAULT_WIDGET_MAX_LINES);
-		const running = activities.filter((activity) => activity.status === "running").length;
+		const maxLines = Math.max(8, this.options.maxLines ?? DEFAULT_WIDGET_MAX_LINES);
+		const running = activities.filter((activity) => activity.status === "running");
 		const th = this.theme;
+
+		// Running jobs are the actionable surface; completed jobs linger briefly as
+		// confirmation. This order makes multiple concurrent async agents visible
+		// instead of letting an older finished card hide an active stream.
+		const orderedActivities = [...running, ...activities.filter((a) => a.status !== "running")];
+		const maxCards = Math.max(1, Math.floor(this.options.maxCards ?? DEFAULT_WIDGET_MAX_CARDS));
+		const visibleCards = orderedActivities.slice(0, maxCards);
+		if (visibleCards.length > 0) {
+			// Split the available widget height across cards so launching two async
+			// agents yields two complete, bounded cards rather than half of one tall
+			// card. MastraAgentCard receives maxBodyLines as its per-card scroll budget.
+			const extra = Math.max(0, activities.length - visibleCards.length);
+			const gapLines = Math.max(0, visibleCards.length - 1);
+			const overflowLines = extra > 0 ? 1 : 0;
+			const availableForCards = Math.max(5, maxLines - gapLines - overflowLines);
+			const perCardTotalLines = Math.max(5, Math.floor(availableForCards / visibleCards.length));
+			const maxBodyLines = Math.max(3, this.options.cardBodyLines ?? perCardTotalLines - 2);
+			// Right-align by padding inside the widget. This is the supported way to
+			// approximate a bottom-right card because Pi has no `bottomRight` widget
+			// placement; valid placements are only `aboveEditor` and `belowEditor`.
+			const cardWidth = Math.min(width, Math.max(12, this.options.cardWidth ?? 96));
+			const pad = Math.max(0, width - cardWidth);
+			const leftPad = " ".repeat(pad);
+			const lines: string[] = [];
+
+			for (let i = 0; i < visibleCards.length; i++) {
+				const activity = visibleCards[i];
+				const cardLines = new MastraAgentCard(
+					activity.details,
+					{ isPartial: activity.status === "running", expanded: false, maxBodyLines },
+					th,
+				).render(cardWidth);
+				if (cardLines.length === 0) continue;
+				if (lines.length > 0) lines.push("");
+				lines.push(...cardLines.map((line) => leftPad + line));
+			}
+
+			if (lines.length > 0) {
+				if (extra > 0) lines.push(truncateToWidth(`${leftPad}${th.fg("dim", `└─ +${extra} more`)}`, width));
+				return lines;
+			}
+		}
+
+		// Fallback: compact list.
+		const allActivities = orderedActivities;
 		const lines: string[] = [];
-		const titleIcon = running > 0 ? th.fg("accent", "●") : th.fg("success", "✓");
-		const title = `${titleIcon} ${th.bold("Mastra Agents")} ${th.fg("dim", `${running} running · ${activities.length} visible`)}`;
+		const titleIcon = running.length > 0 ? th.fg("accent", "●") : th.fg("success", "✓");
+		const title = `${titleIcon} ${th.bold("Mastra Agents")} ${th.fg("dim", `${running.length} running · ${activities.length} visible`)}`;
 		lines.push(truncateToWidth(title, width));
 
-		const visibleActivities = activities.slice(0, Math.max(0, maxLines - 2));
+		const visibleActivities = allActivities.slice(0, Math.max(0, maxLines - 2));
 		for (let i = 0; i < visibleActivities.length; i++) {
 			const activity = visibleActivities[i];
 			const isLast = i === visibleActivities.length - 1 && activities.length <= visibleActivities.length;
@@ -183,6 +249,8 @@ export class MastraAgentsWidget implements Component {
 export interface MastraAgentCardOptions {
 	expanded?: boolean;
 	isPartial?: boolean;
+	/** Optional body budget used by the async widget to stack multiple cards. */
+	maxBodyLines?: number;
 }
 
 export class MastraAgentCard implements Component {
@@ -257,7 +325,7 @@ export class MastraAgentCard implements Component {
 		}
 
 		if (pinnedBodyLines.length > 0 && bodyLines.length > 0) pinnedBodyLines.push("");
-		const bodyLimit = this.options.expanded ? EXPANDED_CARD_BODY_LINES : COLLAPSED_CARD_BODY_LINES;
+		const bodyLimit = this.options.maxBodyLines ?? (this.options.expanded ? EXPANDED_CARD_BODY_LINES : COLLAPSED_CARD_BODY_LINES);
 		const remainingBodyLimit = Math.max(0, bodyLimit - pinnedBodyLines.length);
 		const scrolledBody = remainingBodyLimit > 0 ? [...pinnedBodyLines, ...tailLines(bodyLines, remainingBodyLimit, th)] : tailLines(pinnedBodyLines, bodyLimit, th);
 		for (const bodyLine of scrolledBody) {
@@ -332,6 +400,12 @@ function activityFromDetails(
 		toolResults: details.toolResults.length,
 		usage: details.usage,
 		errors: [...details.errors],
+		details: {
+			...details,
+			toolCalls: [...details.toolCalls],
+			toolResults: [...details.toolResults],
+			errors: [...details.errors],
+		},
 	};
 }
 

@@ -11,6 +11,9 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	const asyncAgentManager = new MastraAsyncAgentManager(client, {
 		activitySink: activityStore,
 		onComplete: (summary) => {
+			// Live deltas stay in MastraAgentsWidget; only the final summary becomes a
+			// transcript message. triggerTurn wakes the parent agent if the async job
+			// finishes after the original Pi turn has gone idle.
 			pi.sendMessage(
 				{
 					customType: MASTRA_AGENT_RESULT_MESSAGE_TYPE,
@@ -18,7 +21,7 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 					display: true,
 					details: summary,
 				},
-				{ deliverAs: "followUp" },
+				{ deliverAs: "followUp", triggerTurn: true },
 			);
 		},
 	});

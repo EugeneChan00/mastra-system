@@ -16,7 +16,7 @@ export const MASTRA_WORKFLOW_LIST_TOOL_NAME = "mastra_workflow_list";
 export const MASTRA_WORKFLOW_STATUS_TOOL_NAME = "mastra_workflow_status";
 export const MASTRA_STATUS_KEY = "mastra";
 
-export const DEFAULT_STREAM_TIMEOUT_MS = 120_000;
+export const DEFAULT_STREAM_TIMEOUT_MS = 60 * 60_000;
 export const DEFAULT_MODEL_CONTENT_LIMIT = 12_000;
 export const DEFAULT_DETAILS_TEXT_LIMIT = 120_000;
 export const DEFAULT_TOOL_EVENT_LIMIT = 100;

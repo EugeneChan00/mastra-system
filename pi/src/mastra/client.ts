@@ -124,7 +124,21 @@ export class MastraHttpClient {
 		options: { signal?: AbortSignal; timeoutMs?: number } = {},
 	): AsyncGenerator<unknown> {
 		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(new Error("Mastra stream timed out")), options.timeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS);
+		// Treat timeoutMs as an idle timeout, not a wall-clock run limit. Mastra
+		// agents can legitimately run for a long time while still streaming tool
+		// and text events; abort only when the SSE connection goes quiet.
+		const idleTimeoutMs = options.timeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS;
+		let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+		const resetTimeout = () => {
+			if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+			timeoutHandle = setTimeout(
+				() => controller.abort(new Error("Mastra stream timed out")),
+				idleTimeoutMs,
+			);
+		};
+
+		resetTimeout();
 		const abortListener = () => controller.abort(options.signal?.reason);
 		if (options.signal?.aborted) {
 			controller.abort(options.signal.reason);
@@ -152,11 +166,14 @@ export class MastraHttpClient {
 			}
 
 			for await (const event of parseSseDataEvents(response.body)) {
+				// Every valid SSE frame proves the stream is alive, so refresh the idle
+				// timer before normalizing or yielding the chunk to callers.
+				resetTimeout();
 				if (event.data === "[DONE]") return;
 				yield parseSseJsonData(event.data);
 			}
 		} finally {
-			clearTimeout(timeout);
+			if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
 			options.signal?.removeEventListener("abort", abortListener);
 		}
 	}

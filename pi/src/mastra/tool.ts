@@ -121,7 +121,7 @@ export const MASTRA_WORKFLOW_STATUS_PARAMETERS = Type.Object({
 	withNestedWorkflows: Type.Optional(Type.Boolean({ description: "Include nested workflow data in steps" })),
 });
 
-const DEFAULT_ASYNC_AGENT_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_ASYNC_AGENT_TIMEOUT_MS = 60 * 60_000;
 
 interface MastraAsyncAgentJob {
 	jobId: string;
@@ -394,6 +394,10 @@ export function createMastraAgentStartTool(manager: MastraAsyncAgentManager) {
 			"After mastra_agent_start returns a jobId, use mastra_agent_read or mastra_agent_async_status to inspect the result instead of rerunning the agent.",
 		],
 		parameters: MASTRA_AGENT_START_PARAMETERS,
+		// The async starter returns a model-visible receipt, but live progress is
+		// rendered by MastraAgentsWidget. Self-rendering an empty component prevents
+		// a duplicate static `mastra async` card from competing with the live card.
+		renderShell: "self" as const,
 		async execute(_toolCallId: string, params: MastraAgentStartInput, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
 			if (signal?.aborted) {
 				return {
@@ -426,15 +430,11 @@ export function createMastraAgentStartTool(manager: MastraAsyncAgentManager) {
 				return errorResult(error, { jobId: params.jobId ?? "", agentId: params.agentId, status: "error" });
 			}
 		},
-		renderCall(args: MastraAgentStartInput, theme: any) {
-			const mode = args.modeId ? theme.fg("dim", ` mode=${args.modeId}`) : "";
-			return new Text(`${theme.fg("toolTitle", theme.bold("mastra async "))}${theme.fg("accent", args.agentId)}${mode}`, 0, 0);
+		renderCall() {
+			return emptyComponent();
 		},
-		renderResult(result: AgentToolResult<Record<string, unknown>>, _options: { expanded?: boolean; isPartial?: boolean }, theme: any) {
-			const status = String(result.details.status ?? "unknown");
-			const jobId = String(result.details.jobId ?? "");
-			const color = status === "error" || status === "aborted" ? "error" : "success";
-			return new Text(`${theme.fg(color, status)} ${theme.fg("accent", jobId)}\n${textContent(result)}`, 0, 0);
+		renderResult() {
+			return emptyComponent();
 		},
 	};
 }
@@ -1085,6 +1085,16 @@ function tail(value: string, maxChars: number): string {
 
 function textContent(result: AgentToolResult<unknown>): string {
 	return result.content.map((item) => ("text" in item ? item.text : "")).join("\n");
+}
+
+function emptyComponent() {
+	// ToolExecutionComponent hides self-rendered tools whose call/result renderers
+	// produce no lines. This keeps transcript UI focused on the live async widget
+	// while preserving the tool result for the parent model.
+	return {
+		render: () => [],
+		invalidate() {},
+	};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
