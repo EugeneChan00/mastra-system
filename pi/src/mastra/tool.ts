@@ -914,10 +914,7 @@ export function createMastraAgentInspectTool(client = new MastraHttpClient(), ma
 				try {
 					const agents = await client.listAgents(signal);
 					const jobs = manager?.inspectJobs() ?? [];
-					const calledAgentIds = new Set(jobs.filter((job) => job.jobId || job.threadId || job.runId).map((job) => job.agentId));
-					const availableAgents = Object.entries(agents)
-						.filter(([agentId]) => !calledAgentIds.has(agentId))
-						.map(([agentId]) => ({ agentId, status: "available" as const }));
+					const availableAgents = Object.entries(agents).map(([agentId]) => ({ agentId, status: "available" as const }));
 					const details: MastraAgentInspectDetails = { agents: [], count: availableAgents.length, errors: [], availableAgents, jobs };
 					return {
 						content: [{ type: "text", text: truncateText(formatAgentInspectSessionResult(details), DEFAULT_MODEL_CONTENT_LIMIT).text }],

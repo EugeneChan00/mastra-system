@@ -1520,8 +1520,13 @@ test("agent inspect with no ids lists available agents and current session jobs"
 	} as any);
 
 	const result = await tool.execute("call", {});
-	assert.equal(result.details.availableAgents?.length, 1);
-	assert.equal(result.details.availableAgents?.[0]?.agentId, "free-agent");
+	assert.equal(result.details.availableAgents?.length, 4);
+	assert.deepEqual(result.details.availableAgents?.map((agent) => agent.agentId), [
+		"developer-agent",
+		"validator-agent",
+		"reviewer-agent",
+		"free-agent",
+	]);
 	assert.equal(result.details.availableAgents?.[0]?.status, "available");
 	assert.deepEqual(result.details.jobs?.map((job) => [job.jobId, job.status]), [
 		["job-1", "working"],
@@ -1563,7 +1568,11 @@ test("agent inspect can list real manager job statuses across lifecycle states",
 	const queuedStatuses = new Map(queuedResult.details.jobs?.map((job) => [job.jobId, job.status]));
 	assert.equal(queuedStatuses.get("working-job"), "working");
 	assert.equal(queuedStatuses.get("queued-job"), "agent_response_queued");
-	assert.deepEqual(queuedResult.details.availableAgents?.map((agent) => agent.agentId), ["free-agent"]);
+	assert.deepEqual(queuedResult.details.availableAgents?.map((agent) => agent.agentId), [
+		"working-agent",
+		"queued-agent",
+		"free-agent",
+	]);
 
 	manager.markEnded("queued-job");
 	const endedResult = await tool.execute("call", {});
