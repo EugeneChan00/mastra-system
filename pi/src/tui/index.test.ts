@@ -148,7 +148,7 @@ test("MastraAgentsWidget render uses full live width with no artificial cap", ()
 	assert.notEqual(lines120.join(""), lines80.join(""));
 });
 
-test("MastraAgentsWidget keeps lingering done card slots stable", () => {
+test("MastraAgentsWidget keeps queued response card slots stable until explicit end", () => {
 	const store = new MastraAgentActivityStore(60_000);
 	for (let i = 1; i <= 4; i++) {
 		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
@@ -162,10 +162,15 @@ test("MastraAgentsWidget keeps lingering done card slots stable", () => {
 	const before = widget.render(100).filter((line) => line.includes("Mastra: agent-"));
 	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
 	const after = widget.render(100).filter((line) => line.includes("Mastra: agent-"));
-	widget.dispose();
 
 	assert.deepEqual(after.map(agentLabel), before.map(agentLabel));
 	assert.ok(after[0].includes("done"));
+
+	store.end("call-1");
+	const ended = widget.render(100).filter((line) => line.includes("Mastra: agent-"));
+	widget.dispose();
+
+	assert.deepEqual(ended.map(agentLabel), ["agent-2", "agent-3", "agent-4"]);
 });
 
 test("MastraAgentsWidget keeps newest jobs visible with newest at the bottom", () => {
@@ -181,6 +186,32 @@ test("MastraAgentsWidget keeps newest jobs visible with newest at the bottom", (
 	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4 });
 	widget.render(100);
 	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
+	store.start("call-5", { agentId: "agent-5", message: "task 5" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-5",
+		status: "running",
+		text: "output 5",
+	}));
+	const labels = widget.render(100).filter((line) => line.includes("Mastra: agent-")).map(agentLabel);
+	widget.dispose();
+
+	assert.deepEqual(labels, ["agent-2", "agent-3", "agent-4", "agent-5"]);
+});
+
+test("MastraAgentsWidget appends new cards from the bottom after ended cards collapse", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 4; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: `output ${i}`,
+		}));
+	}
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4 });
+	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
+	assert.deepEqual(widget.render(100).filter((line) => line.includes("Mastra: agent-")).map(agentLabel), ["agent-1", "agent-2", "agent-3", "agent-4"]);
+
+	store.end("call-1");
 	store.start("call-5", { agentId: "agent-5", message: "task 5" } as MastraAgentCallInput, makeDetails({
 		agentId: "agent-5",
 		status: "running",
@@ -224,6 +255,52 @@ test("MastraAgentsWidget lets a single card use the total line budget", () => {
 
 	assert.ok(lines.length > 20, `single card should expand into budget, got ${lines.length}`);
 	assert.ok(lines.length <= 30, `expected maxLines cap, got ${lines.length}`);
+});
+
+test("MastraAgentsWidget divides total height budget across multiple long cards", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 3; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: Array.from({ length: 80 }, (_, index) => `agent ${i} line ${index + 1}`).join("\n"),
+		}));
+	}
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4, maxLines: 30 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(lines.filter((line) => line.includes("Mastra: agent-")).length, 3);
+	assert.ok(lines.length <= 30, `expected aggregate maxLines cap, got ${lines.length}`);
+	for (const label of ["agent-1", "agent-2", "agent-3"]) {
+		assert.ok(lines.some((line) => line.includes(`Mastra: ${label}`)), `${label} should stay visible`);
+	}
+	for (let i = 1; i <= 3; i++) {
+		assert.ok(lines.some((line) => line.includes(`agent ${i} line 80`)), `agent-${i} should retain body output within shared budget`);
+	}
+});
+
+test("MastraAgentsWidget preserves whole newest cards under tight height budget", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 5; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: Array.from({ length: 20 }, (_, index) => `agent ${i} line ${index + 1}`).join("\n"),
+		}));
+	}
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4, maxLines: 12 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.ok(lines.length <= 12, `expected tight maxLines cap, got ${lines.length}`);
+	assert.match(lines[0], /\+3 more/);
+	assert.deepEqual(lines.filter((line) => line.includes("Mastra: agent-")).map(agentLabel), ["agent-4", "agent-5"]);
+	assert.equal(lines.filter((line) => line.startsWith("╭")).length, 2);
+	assert.equal(lines.filter((line) => line.startsWith("╰")).length, 2);
+	assert.equal(lines.at(-1)?.startsWith("╰"), true, "render should end at a whole-card bottom border");
 });
 
 function agentLabel(line: string): string {

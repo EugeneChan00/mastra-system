@@ -49,10 +49,6 @@ export function workflowStreamPath(workflowId: string, runId: string): string {
 	return `${workflowPath(workflowId)}/stream?runId=${encodeURIComponent(runId)}`;
 }
 
-export function workflowStartAsyncPath(workflowId: string, runId?: string): string {
-	return `${workflowPath(workflowId)}/start-async${runId ? `?runId=${encodeURIComponent(runId)}` : ""}`;
-}
-
 export function workflowObservePath(workflowId: string, runId: string): string {
 	return `${workflowPath(workflowId)}/observe?runId=${encodeURIComponent(runId)}`;
 }

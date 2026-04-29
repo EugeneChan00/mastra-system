@@ -127,9 +127,7 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("message_end", async (event) => {
-		const message = event.message as { role?: string; customType?: string; details?: Partial<MastraAgentAsyncJobSummary> } | undefined;
-		if (message?.role !== "custom" || message.customType !== MASTRA_AGENT_RESULT_MESSAGE_TYPE) return;
-		const jobId = message.details?.jobId;
+		const jobId = completionJobIdFromMessageEnd(event);
 		if (jobId) asyncAgentManager.markEnded(jobId);
 	});
 
@@ -241,7 +239,7 @@ function formatWorkflowRun(run: MastraWorkflowRun): string {
 		.join("\n");
 }
 
-function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary): string {
+export function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary): string {
 	const lines = [
 		"<system-reminder>",
 		`Asynchronous Mastra agent task completed: ${summary.jobId}`,
@@ -264,7 +262,19 @@ function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary): string
 	return lines.filter(Boolean).join("\n");
 }
 
-function hasCompletionReminder(entries: readonly unknown[], jobId: string): boolean {
+export function completionJobIdFromMessageEnd(event: unknown): string | undefined {
+	if (typeof event !== "object" || event === null) return undefined;
+	const message = (event as { message?: unknown }).message;
+	if (typeof message !== "object" || message === null) return undefined;
+	const record = message as { role?: unknown; customType?: unknown; details?: unknown };
+	if (record.role !== "custom" || record.customType !== MASTRA_AGENT_RESULT_MESSAGE_TYPE) return undefined;
+	const details = record.details;
+	if (typeof details !== "object" || details === null) return undefined;
+	const jobId = (details as { jobId?: unknown }).jobId;
+	return typeof jobId === "string" && jobId.length > 0 ? jobId : undefined;
+}
+
+export function hasCompletionReminder(entries: readonly unknown[], jobId: string): boolean {
 	return entries.some((entry) => {
 		if (typeof entry !== "object" || entry === null) return false;
 		const record = entry as Record<string, unknown>;

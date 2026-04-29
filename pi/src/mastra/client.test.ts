@@ -118,26 +118,6 @@ test("streamWorkflow posts workflow payload and yields parsed chunks until DONE"
 	assert.equal(requestBody, JSON.stringify({ inputData: { hello: "world" } }));
 });
 
-test("startWorkflowAsync posts start-async payload with runId", async () => {
-	let requestUrl = "";
-	let requestBody = "";
-	const client = new MastraHttpClient({
-		fetchImpl: async (url, init) => {
-			requestUrl = String(url);
-			requestBody = String(init?.body);
-			return new Response(JSON.stringify({ runId: "run-1" }), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			});
-		},
-	});
-
-	const result = await client.startWorkflowAsync("pi.agent-job", "run-1", { inputData: { jobId: "job" }, resourceId: "resource" });
-	assert.deepEqual(result, { runId: "run-1" });
-	assert.match(requestUrl, /\/workflows\/pi\.agent-job\/start-async\?runId=run-1$/);
-	assert.equal(requestBody, JSON.stringify({ inputData: { jobId: "job" }, resourceId: "resource" }));
-});
-
 test("observeWorkflow posts observe payload and yields parsed chunks until DONE", async () => {
 	let requestUrl = "";
 	const body = new ReadableStream<Uint8Array>({
@@ -178,6 +158,35 @@ test("listWorkflowRuns parses runs wrapper and forwards resourceId", async () =>
 	const runs = await client.listWorkflowRuns("pi.agent-job", { resourceId: "pi:abc" });
 	assert.equal(runs[0].runId, "run-1");
 	assert.match(requestUrl, /\/workflows\/pi\.agent-job\/runs\?resourceId=pi%3Aabc$/);
+});
+
+test("listWorkflowRuns normalizes Mastra snapshot entries", async () => {
+	const client = new MastraHttpClient({
+		fetchImpl: async () => {
+			return new Response(
+				JSON.stringify({
+					runs: [
+						{
+							workflowName: "pi.agent-job",
+							runId: "canonical-run",
+							resourceId: "resource",
+							snapshot: JSON.stringify({
+								status: "success",
+								context: { input: { jobId: "job", piSessionId: "session" } },
+								result: { status: "error", text: "partial", errors: ["agent failed"] },
+							}),
+						},
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		},
+	});
+
+	const runs = await client.listWorkflowRuns("pi.agent-job");
+	assert.equal(runs[0].status, "success");
+	assert.deepEqual(runs[0].payload, { jobId: "job", piSessionId: "session" });
+	assert.deepEqual(runs[0].result, { status: "error", text: "partial", errors: ["agent failed"] });
 });
 
 test("cancelWorkflowRun posts cancel endpoint", async () => {

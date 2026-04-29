@@ -207,14 +207,14 @@ export class MastraAgentsWidget implements Component {
 			.filter((activity) => activity.lifecycleStatus === "working" || activity.lifecycleStatus === "agent_response_queued")
 			.sort((a, b) => a.order - b.order);
 		const maxCards = Math.max(1, Math.floor(this.options.maxCards ?? DEFAULT_WIDGET_MAX_CARDS));
-		const visibleCards = this.selectVisibleCards(orderedActivities, maxCards);
+		const visibleCards = this.selectVisibleCards(orderedActivities, maxCards, maxLines);
 		if (visibleCards.length > 0) {
 			const extra = Math.max(0, orderedActivities.length - visibleCards.length);
 			const gapLines = Math.max(0, visibleCards.length - 1);
 			const overflowLines = extra > 0 ? 1 : 0;
 			const availableForCards = Math.max(5, maxLines - gapLines - overflowLines);
 			const perCardTotalLines = Math.max(5, Math.floor(availableForCards / visibleCards.length));
-			const maxBodyLines = Math.max(3, this.options.cardBodyLines ?? perCardTotalLines - 2);
+			const maxBodyLines = Math.max(3, Math.min(this.options.cardBodyLines ?? perCardTotalLines - 2, perCardTotalLines - 2));
 			const lines: string[] = [];
 
 			if (extra > 0) lines.push(truncateToWidth(th.fg("dim", `+${extra} more`), width));
@@ -227,12 +227,12 @@ export class MastraAgentsWidget implements Component {
 					th,
 				).render(width);
 				if (cardLines.length === 0) continue;
-				if (lines.length > 0) lines.push("");
+				if (lines.length > 0 && !(extra > 0 && i === 0)) lines.push("");
 				lines.push(...cardLines);
 			}
 
 			if (lines.length > 0) {
-				return lines.slice(0, maxLines);
+				return lines;
 			}
 		}
 
@@ -274,8 +274,17 @@ export class MastraAgentsWidget implements Component {
 		clearInterval(this.timer);
 	}
 
-	private selectVisibleCards(orderedActivities: MastraAgentActivity[], maxCards: number): MastraAgentActivity[] {
-		const visibleCards = orderedActivities.slice(-maxCards);
+	private selectVisibleCards(orderedActivities: MastraAgentActivity[], maxCards: number, maxLines: number): MastraAgentActivity[] {
+		const minCardLines = 5;
+		let visibleCount = Math.min(maxCards, orderedActivities.length);
+		while (visibleCount > 1) {
+			const hiddenCount = orderedActivities.length - visibleCount;
+			const overflowLines = hiddenCount > 0 ? 1 : 0;
+			const gapLines = visibleCount - 1;
+			if (visibleCount * minCardLines + gapLines + overflowLines <= maxLines) break;
+			visibleCount -= 1;
+		}
+		const visibleCards = orderedActivities.slice(-visibleCount);
 		this.visibleToolCallIds = visibleCards.map((activity) => activity.toolCallId);
 		return visibleCards;
 	}

@@ -128,6 +128,10 @@ interface MastraAsyncAgentJob {
 	suppressCompletionMessage?: boolean;
 	lifecycleStatus: Exclude<MastraAgentLifecycleStatus, "available">;
 	usesWorkflow: boolean;
+	completionQueuedNotified?: boolean;
+	completionMessageSent?: boolean;
+	suppressQueuedCompletion?: boolean;
+	workflowObserverActive?: boolean;
 }
 
 export interface MastraAsyncAgentManagerOptions {
@@ -206,10 +210,9 @@ export class MastraAsyncAgentManager {
 		this.jobs.set(jobId, job);
 		this.options.activitySink?.start(jobId, effectiveParams, details);
 
-		if (this.canUseWorkflowJobs()) {
+		if (this.canStartWorkflowJobs()) {
 			try {
-				await this.startWorkflowJob(job);
-				void this.observeWorkflowJob(job);
+				this.startWorkflowJob(job);
 				return this.summary(job);
 			} catch (error) {
 				// During local development the Pi package can be newer than the running
@@ -262,20 +265,32 @@ export class MastraAsyncAgentManager {
 	async cancel(jobId: string, reason = "cancelled"): Promise<MastraAgentAsyncJobSummary | undefined> {
 		const job = this.jobs.get(jobId);
 		if (!job) return undefined;
-		if (job.lifecycleStatus === "working" || job.details.status === "running") {
-			job.details.errors.push(reason);
+		if (job.details.status === "running" && job.usesWorkflow && job.workflowId && job.runId && this.hasClientMethod("getWorkflowRun")) {
+			await this.refreshWorkflowRun(job).catch(() => undefined);
+		}
+		if (job.details.status !== "running") {
+			if (job.lifecycleStatus === "working") await this.completeJob(job);
+			else if (job.lifecycleStatus === "agent_response_queued") this.markEnded(jobId);
+			return this.summary(job);
+		}
+		if (job.lifecycleStatus === "working") {
+			job.suppressQueuedCompletion = true;
+			job.suppressCompletionMessage = true;
+			pushUniqueError(job.details, reason);
 			job.controller.abort(new Error(reason));
 			if (job.usesWorkflow && job.workflowId && job.runId && this.hasClientMethod("cancelWorkflowRun")) {
 				await this.client.cancelWorkflowRun(job.workflowId, job.runId).catch((error) => {
-					job.details.errors.push(error instanceof Error ? error.message : String(error));
+					pushUniqueError(job.details, `Remote workflow cancellation failed: ${error instanceof Error ? error.message : String(error)}`);
 				});
 			}
 			job.details.status = "aborted";
 			job.details.updatedAt = Date.now();
 			job.details.completedAt = job.details.updatedAt;
 			job.details.terminalReason = "abort";
+			this.markEnded(jobId);
+		} else {
+			this.markEnded(jobId);
 		}
-		this.markEnded(jobId);
 		return this.summary(job);
 	}
 
@@ -291,9 +306,14 @@ export class MastraAsyncAgentManager {
 	}
 
 	detachAll(reason = "session shutdown"): void {
-		for (const job of this.jobs.values()) {
-			if (job.usesWorkflow && job.lifecycleStatus === "working") {
+		for (const job of Array.from(this.jobs.values())) {
+			if (job.lifecycleStatus === "working") {
+				job.suppressQueuedCompletion = true;
+				job.suppressCompletionMessage = true;
+				pushUniqueError(job.details, reason);
+				this.markEnded(job.jobId);
 				job.controller.abort(new Error(reason));
+				this.jobs.delete(job.jobId);
 			}
 		}
 		this.options.activitySink?.reset?.();
@@ -302,13 +322,14 @@ export class MastraAsyncAgentManager {
 	markEnded(jobId: string): MastraAgentAsyncJobSummary | undefined {
 		const job = this.jobs.get(jobId);
 		if (!job) return undefined;
+		if (job.lifecycleStatus === "ended") return this.summary(job);
 		job.lifecycleStatus = "ended";
 		this.options.activitySink?.end?.(jobId);
 		return this.summary(job);
 	}
 
 	async restoreSessionJobs(): Promise<MastraAgentAsyncJobSummary[]> {
-		if (!this.canUseWorkflowJobs() || !this.piSessionId) return [];
+		if (!this.canRestoreWorkflowJobs() || !this.piSessionId) return [];
 		const resourceId = defaultResourceId(this.cwd);
 		let runs: MastraWorkflowRun[];
 		try {
@@ -318,22 +339,24 @@ export class MastraAsyncAgentManager {
 		}
 
 		const restored: MastraAgentAsyncJobSummary[] = [];
-		for (const run of runs.filter((candidate) => this.isSessionRun(candidate.runId))) {
+		for (const run of runs.filter((candidate) => this.isSessionWorkflowRun(candidate))) {
 			const job = this.jobFromWorkflowRun(run);
 			if (!job) continue;
-			restored.push(this.summary(job));
 
-			if (isActiveWorkflowStatus(run.status) && !job.controller.signal.aborted) {
+			const status = workflowRunStatus(run);
+			if (isActiveWorkflowStatus(status) && !job.controller.signal.aborted) {
 				void this.observeWorkflowJob(job);
+				restored.push(this.summary(job));
 				continue;
 			}
 
 			await this.refreshWorkflowRun(job).catch(() => undefined);
 			if (this.options.isCompletionAcknowledged?.(job.jobId)) {
 				this.markEnded(job.jobId);
-			} else if (isTerminalWorkflowStatus(run.status)) {
+			} else if (isTerminalWorkflowStatus(status)) {
 				await this.completeJob(job);
 			}
+			restored.push(this.summary(job));
 		}
 		return restored;
 	}
@@ -370,80 +393,128 @@ export class MastraAsyncAgentManager {
 		}
 	}
 
-	private async startWorkflowJob(job: MastraAsyncAgentJob): Promise<void> {
+	private startWorkflowJob(job: MastraAsyncAgentJob): void {
 		if (!job.workflowId || !job.runId) throw new Error("Workflow job is missing workflow/run id");
-		await this.client.startWorkflowAsync(job.workflowId, job.runId, {
-			resourceId: job.details.resourceId,
-			inputData: {
-				jobId: job.jobId,
-				jobName: job.jobName,
-				piSessionId: job.piSessionId,
-				agentId: job.params.agentId,
-				message: job.params.message,
-				threadId: job.details.threadId,
-				resourceId: job.details.resourceId,
-				requestContext: job.params.requestContext,
-				includeToolResults: job.params.includeToolResults,
-				includeReasoning: job.params.includeReasoning ?? false,
-				input_args: job.params.input_args,
-				timeoutMs: job.params.timeoutMs,
-			},
-			requestContext: job.params.requestContext,
-		}, { signal: job.controller.signal });
 		job.usesWorkflow = true;
+		void this.streamWorkflowJob(job);
+	}
+
+	private async streamWorkflowJob(job: MastraAsyncAgentJob): Promise<void> {
+		if (!job.workflowId || !job.runId) return;
+		if (job.workflowObserverActive) return;
+		job.workflowObserverActive = true;
+		let fallbackStarted = false;
+		try {
+			const timeoutMs = job.params.timeoutMs ?? DEFAULT_ASYNC_AGENT_TIMEOUT_MS;
+			for await (const chunk of this.client.streamWorkflow(job.workflowId, job.runId, workflowJobRequest(job), { signal: job.controller.signal, timeoutMs })) {
+				await this.applyWorkflowJobChunk(job, chunk);
+			}
+			await this.refreshWorkflowRun(job);
+			if (job.details.status === "running") markStreamEofIncomplete(job.details);
+		} catch (error) {
+			job.workflowObserverActive = false;
+			fallbackStarted = await this.fallbackWorkflowStreamToDirect(job, error);
+			if (!fallbackStarted) markStreamError(job.details, error, job.controller.signal.aborted);
+		} finally {
+			job.workflowObserverActive = false;
+			if (!fallbackStarted) await this.completeJob(job);
+		}
+	}
+
+	private async fallbackWorkflowStreamToDirect(job: MastraAsyncAgentJob, error: unknown): Promise<boolean> {
+		if (job.controller.signal.aborted || job.details.status !== "running" || job.details.rawChunkCount > 0 || !this.hasClientMethod("streamAgent")) {
+			return false;
+		}
+		pushUniqueError(job.details, `Workflow job runner unavailable, falling back to direct stream: ${error instanceof Error ? error.message : String(error)}`);
+		try {
+			const artifactDir = await mkdtemp(join(tmpdir(), `${job.jobId}-`));
+			job.artifactPath = join(artifactDir, "output.txt");
+			job.eventsPath = join(artifactDir, "events.jsonl");
+			job.usesWorkflow = false;
+			await this.runDirect(job, createStreamRequest(job.params, job.details.threadId, job.details.resourceId));
+			return true;
+		} catch (fallbackError) {
+			pushUniqueError(job.details, `Direct fallback failed: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+			return false;
+		}
 	}
 
 	private async observeWorkflowJob(job: MastraAsyncAgentJob): Promise<void> {
 		if (!job.workflowId || !job.runId) return;
+		if (job.workflowObserverActive) return;
+		job.workflowObserverActive = true;
 		try {
 			const timeoutMs = job.params.timeoutMs ?? DEFAULT_ASYNC_AGENT_TIMEOUT_MS;
 			for await (const chunk of this.client.observeWorkflow(job.workflowId, job.runId, { resourceId: job.details.resourceId }, { signal: job.controller.signal, timeoutMs })) {
-				const agentChunk = unwrapWorkflowAgentChunk(chunk);
-				if (agentChunk !== undefined) {
-					const normalized = normalizeMastraChunk(agentChunk);
-					await this.persistChunk(job, agentChunk, normalized);
-					applyNormalizedEvent(job.details, normalized);
-					this.options.activitySink?.update(job.jobId, job.details);
-					continue;
-				}
-				applyWorkflowLifecycleChunk(job.details, chunk);
-				this.options.activitySink?.update(job.jobId, job.details);
+				await this.applyWorkflowJobChunk(job, chunk);
 			}
 			await this.refreshWorkflowRun(job);
 			if (job.details.status === "running") markStreamEofIncomplete(job.details);
 		} catch (error) {
 			markStreamError(job.details, error, job.controller.signal.aborted);
 		} finally {
+			job.workflowObserverActive = false;
 			await this.completeJob(job);
 		}
 	}
 
+	private async applyWorkflowJobChunk(job: MastraAsyncAgentJob, chunk: unknown): Promise<void> {
+		const agentChunk = unwrapWorkflowAgentChunk(chunk);
+		if (agentChunk !== undefined) {
+			const normalized = normalizeMastraChunk(agentChunk);
+			await this.persistChunk(job, agentChunk, normalized);
+			applyNormalizedEvent(job.details, normalized);
+			this.options.activitySink?.update(job.jobId, job.details);
+			return;
+		}
+		applyWorkflowLifecycleChunk(job.details, chunk);
+		this.options.activitySink?.update(job.jobId, job.details);
+	}
+
 	private async refreshWorkflowRun(job: MastraAsyncAgentJob): Promise<void> {
 		if (!job.workflowId || !job.runId || !this.hasClientMethod("getWorkflowRun")) return;
-		const run = await this.client.getWorkflowRun(job.workflowId, job.runId, { fields: ["result", "error", "status"] });
+		const run = await this.client.getWorkflowRun(job.workflowId, job.runId, { fields: ["result", "error", "payload"] });
 		const output = workflowJobOutput(run.result);
+		const status = workflowRunStatus(run);
 		if (output.artifactPath) job.artifactPath = output.artifactPath;
 		if (output.eventsPath) job.eventsPath = output.eventsPath;
 		if (output.text && !job.details.text) job.details.text = output.text;
+		for (const error of output.errors ?? []) pushUniqueError(job.details, error);
 
-		if (run.status === "success" && job.details.status === "running") {
+		if (output.status === "error" && job.details.status !== "aborted") {
+			markStreamError(job.details, output.errors?.[0] ?? run.error ?? "Workflow agent job returned error", false);
+		} else if (status === "success" && job.details.status === "running") {
 			job.details.status = "done";
 			job.details.updatedAt = Date.now();
 			job.details.completedAt = job.details.updatedAt;
 			job.details.terminalReason = "finish";
-		} else if (run.status === "canceled" && job.details.status === "running") {
+		} else if (status === "canceled" && job.details.status === "running") {
 			markStreamError(job.details, "Workflow run canceled", true);
-		} else if (isFailedWorkflowStatus(run.status) && job.details.status === "running") {
-			markStreamError(job.details, run.error ?? `Workflow run failed with status ${run.status}`, false);
+		} else if (isFailedWorkflowStatus(status) && job.details.status === "running") {
+			markStreamError(job.details, run.error ?? `Workflow run failed with status ${status}`, false);
 		}
 	}
 
 	private async completeJob(job: MastraAsyncAgentJob): Promise<void> {
 		if (job.lifecycleStatus === "ended") return;
+		if (job.suppressQueuedCompletion) return;
+		const shouldNotifyQueued = job.lifecycleStatus !== "agent_response_queued" || job.completionQueuedNotified !== true;
 		job.lifecycleStatus = "agent_response_queued";
-		this.options.activitySink?.finish(job.jobId, job.details);
-		if (job.finalMessage && !job.suppressCompletionMessage && !this.options.isCompletionAcknowledged?.(job.jobId)) {
-			await this.options.onComplete?.(this.summary(job));
+		if (shouldNotifyQueued) {
+			try {
+				this.options.activitySink?.finish(job.jobId, job.details);
+				job.completionQueuedNotified = true;
+			} catch (error) {
+				pushUniqueError(job.details, `Completion activity sink failed: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}
+		if (job.finalMessage && !job.suppressCompletionMessage && !job.completionMessageSent && !this.options.isCompletionAcknowledged?.(job.jobId)) {
+			try {
+				await this.options.onComplete?.(this.summary(job));
+				job.completionMessageSent = true;
+			} catch (error) {
+				pushUniqueError(job.details, `Completion reminder failed: ${error instanceof Error ? error.message : String(error)}`);
+			}
 		}
 	}
 
@@ -462,6 +533,7 @@ export class MastraAsyncAgentManager {
 		});
 		const existing = this.jobs.get(jobId);
 		if (existing) return existing;
+		const output = workflowJobOutput(run.result);
 
 		const params: MastraAgentStartInput = {
 			agentId,
@@ -479,15 +551,24 @@ export class MastraAsyncAgentManager {
 			finalMessage: true,
 		};
 		const details = createInitialDetails(params);
-		details.status = isActiveWorkflowStatus(run.status) ? "running" : run.status === "success" ? "done" : isFailedWorkflowStatus(run.status) ? "error" : "aborted";
+		const status = workflowRunStatus(run);
+		details.status = isActiveWorkflowStatus(status)
+			? "running"
+			: output.status === "error"
+				? "error"
+				: status === "success"
+					? "done"
+					: isFailedWorkflowStatus(status)
+						? "error"
+						: "aborted";
 		if (details.status !== "running") {
 			details.updatedAt = Date.now();
 			details.completedAt = details.updatedAt;
 			details.terminalReason = details.status === "done" ? "finish" : details.status === "aborted" ? "abort" : "error";
 		}
 
-		const output = workflowJobOutput(run.result);
 		if (output.text) details.text = output.text;
+		for (const error of output.errors ?? []) pushUniqueError(details, error);
 		const job: MastraAsyncAgentJob = {
 			jobId,
 			jobName,
@@ -500,17 +581,27 @@ export class MastraAsyncAgentManager {
 			artifactPath: output.artifactPath,
 			eventsPath: output.eventsPath,
 			finalMessage: true,
-			lifecycleStatus: isActiveWorkflowStatus(run.status) ? "working" : "agent_response_queued",
+			lifecycleStatus: "working",
 			usesWorkflow: true,
 		};
 		this.jobs.set(jobId, job);
 		this.options.activitySink?.start(jobId, params, details);
-		if (job.lifecycleStatus !== "working") this.options.activitySink?.finish(jobId, details);
 		return job;
 	}
 
-	private canUseWorkflowJobs(): boolean {
-		return this.options.useWorkflowJobs !== false && this.hasClientMethod("startWorkflowAsync") && this.hasClientMethod("observeWorkflow");
+	private canStartWorkflowJobs(): boolean {
+		return this.options.useWorkflowJobs !== false && this.hasClientMethod("streamWorkflow");
+	}
+
+	private canRestoreWorkflowJobs(): boolean {
+		return this.options.useWorkflowJobs !== false && this.hasClientMethod("listWorkflowRuns") && this.hasClientMethod("observeWorkflow");
+	}
+
+	private isSessionWorkflowRun(run: MastraWorkflowRun): boolean {
+		if (!this.piSessionId) return false;
+		const input = workflowRunInput(run);
+		const piSessionId = stringField(input, "piSessionId");
+		return piSessionId ? piSessionId === this.piSessionId : this.isSessionRun(run.runId);
 	}
 
 	private hasClientMethod(name: keyof MastraHttpClient): boolean {
@@ -574,6 +665,10 @@ export class MastraAsyncAgentManager {
 			eventsPath: job.eventsPath,
 		};
 	}
+}
+
+function workflowRunStatus(run: MastraWorkflowRun): string {
+	return typeof run.status === "string" ? run.status : "running";
 }
 
 export interface MastraToolOptions {
@@ -1124,6 +1219,29 @@ export function createWorkflowStreamRequest(params: MastraWorkflowCallInput): Ma
 	};
 }
 
+function workflowJobRequest(job: MastraAsyncAgentJob): MastraWorkflowStreamRequest {
+	return {
+		resourceId: job.details.resourceId,
+		inputData: {
+			jobId: job.jobId,
+			jobName: job.jobName,
+			piSessionId: job.piSessionId,
+			runId: job.runId,
+			agentRunId: job.runId,
+			agentId: job.params.agentId,
+			message: job.params.message,
+			threadId: job.details.threadId,
+			resourceId: job.details.resourceId,
+			requestContext: job.params.requestContext,
+			includeToolResults: job.params.includeToolResults,
+			includeReasoning: job.params.includeReasoning ?? false,
+			input_args: job.params.input_args,
+			timeoutMs: job.params.timeoutMs,
+		},
+		requestContext: job.params.requestContext,
+	};
+}
+
 function createInitialDetails(params: MastraAgentCallInput): MastraAgentCallDetails {
 	const resourceId = params.resourceId ?? defaultResourceId();
 	const now = Date.now();
@@ -1164,6 +1282,10 @@ function markStreamError(details: MastraAgentCallDetails, error: unknown, aborte
 	details.terminalReason = aborted ? "abort" : "error";
 	details.incomplete = false;
 	const message = error instanceof Error ? error.message : String(error);
+	pushUniqueError(details, message);
+}
+
+function pushUniqueError(details: MastraAgentCallDetails, message: string): void {
 	if (!details.errors.includes(message)) details.errors.push(message);
 }
 
@@ -1495,15 +1617,21 @@ function applyWorkflowLifecycleChunk(details: MastraAgentCallDetails, chunk: unk
 	}
 }
 
-function workflowJobOutput(value: unknown): { text?: string; artifactPath?: string; eventsPath?: string } {
+function workflowJobOutput(value: unknown): { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[] } {
 	const candidates = objectCandidates(value);
+	let output: { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[] } = {};
 	for (const candidate of candidates) {
-		const artifactPath = stringField(candidate, "artifactPath");
-		const eventsPath = stringField(candidate, "eventsPath");
-		const text = stringField(candidate, "text") ?? stringField(candidate, "output") ?? stringField(candidate, "textPreview");
-		if (artifactPath || eventsPath || text) return { artifactPath, eventsPath, text };
+		const rawStatus = stringField(candidate, "status");
+		const status = rawStatus === "done" || rawStatus === "error" ? rawStatus : undefined;
+		output = {
+			status: output.status ?? status,
+			artifactPath: output.artifactPath ?? stringField(candidate, "artifactPath"),
+			eventsPath: output.eventsPath ?? stringField(candidate, "eventsPath"),
+			text: output.text ?? stringField(candidate, "text") ?? stringField(candidate, "output") ?? stringField(candidate, "textPreview"),
+			errors: output.errors ?? stringArrayField(candidate, "errors"),
+		};
 	}
-	return {};
+	return output;
 }
 
 function workflowRunInput(run: MastraWorkflowRun): Record<string, unknown> {
@@ -1561,6 +1689,13 @@ function recordStringField(record: Record<string, unknown>, key: string): Record
 	if (!isRecord(value)) return undefined;
 	const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string");
 	return entries.length === Object.keys(value).length ? Object.fromEntries(entries) : undefined;
+}
+
+function stringArrayField(record: Record<string, unknown>, key: string): string[] | undefined {
+	const value = record[key];
+	if (!Array.isArray(value)) return undefined;
+	const strings = value.filter((entry): entry is string => typeof entry === "string");
+	return strings.length === value.length ? strings : undefined;
 }
 
 function isActiveWorkflowStatus(status: string): boolean {

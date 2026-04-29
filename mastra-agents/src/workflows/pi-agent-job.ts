@@ -11,6 +11,8 @@ const piAgentJobInputSchema = z.object({
   jobId: z.string(),
   jobName: z.string(),
   piSessionId: z.string().optional(),
+  runId: z.string().optional(),
+  agentRunId: z.string().optional(),
   agentId: z.string(),
   message: z.string(),
   threadId: z.string(),
@@ -26,6 +28,8 @@ const piAgentJobOutputSchema = z.object({
   jobId: z.string(),
   jobName: z.string(),
   piSessionId: z.string().optional(),
+  runId: z.string().optional(),
+  agentRunId: z.string().optional(),
   agentId: z.string(),
   threadId: z.string(),
   resourceId: z.string(),
@@ -36,7 +40,7 @@ const piAgentJobOutputSchema = z.object({
   errors: z.array(z.string()),
 });
 
-const runPiAgentJobStep = createStep({
+export const runPiAgentJobStep = createStep({
   id: "run-pi-agent-job",
   inputSchema: piAgentJobInputSchema,
   outputSchema: piAgentJobOutputSchema,
@@ -62,7 +66,7 @@ const runPiAgentJobStep = createStep({
         ...(inputData.input_args && Object.keys(inputData.input_args).length > 0 ? { input_args: inputData.input_args } : {}),
       };
       const streamResult = await agent.stream(formatPrompt(inputData.message, inputData.input_args), {
-        runId: inputData.jobId,
+        runId: inputData.agentRunId ?? inputData.runId ?? inputData.jobId,
         memory: {
           thread: inputData.threadId,
           resource: inputData.resourceId,
@@ -91,6 +95,8 @@ const runPiAgentJobStep = createStep({
         jobId: inputData.jobId,
         jobName: inputData.jobName,
         piSessionId: inputData.piSessionId,
+        runId: inputData.runId,
+        agentRunId: inputData.agentRunId,
         agentId: inputData.agentId,
         threadId: inputData.threadId,
         resourceId: inputData.resourceId,
@@ -106,6 +112,8 @@ const runPiAgentJobStep = createStep({
       jobId: inputData.jobId,
       jobName: inputData.jobName,
       piSessionId: inputData.piSessionId,
+      runId: inputData.runId,
+      agentRunId: inputData.agentRunId,
       agentId: inputData.agentId,
       threadId: inputData.threadId,
       resourceId: inputData.resourceId,

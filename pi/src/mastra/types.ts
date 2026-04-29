@@ -141,8 +141,6 @@ export interface MastraWorkflowStreamRequest {
 	closeOnSuspend?: boolean;
 }
 
-export interface MastraWorkflowAsyncStartRequest extends MastraWorkflowStreamRequest {}
-
 export interface MastraWorkflowRunsListInput {
 	resourceId?: string;
 	status?: string;
@@ -176,7 +174,8 @@ export interface MastraWorkflowRun {
 	resourceId?: string;
 	createdAt?: string;
 	updatedAt?: string;
-	status: MastraWorkflowRunStatus;
+	status?: MastraWorkflowRunStatus;
+	snapshot?: unknown;
 	initialState?: unknown;
 	result?: unknown;
 	error?: unknown;
