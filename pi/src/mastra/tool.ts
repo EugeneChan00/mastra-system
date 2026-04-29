@@ -60,6 +60,7 @@ export const MASTRA_AGENT_CALL_PARAMETERS = Type.Object({
 	includeToolResults: Type.Optional(Type.Boolean({ description: "Include tool result summaries in model-facing text" })),
 	includeReasoning: Type.Optional(Type.Boolean({ description: "Include reasoning deltas in model-facing text" })),
 	timeoutMs: Type.Optional(Type.Number({ description: "Stream timeout in milliseconds" })),
+	input_args: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Optional key-value pairs for prompt placeholder substitution. Keys like $1, $2 are replaced in the message. Numeric keys are sorted for deterministic ordering." })),
 });
 
 export const MASTRA_AGENT_START_PARAMETERS = Type.Object({
@@ -74,6 +75,7 @@ export const MASTRA_AGENT_START_PARAMETERS = Type.Object({
 	timeoutMs: Type.Optional(Type.Number({ description: "Stream timeout in milliseconds" })),
 	jobId: Type.Optional(Type.String({ description: "Optional caller-provided async job id" })),
 	finalMessage: Type.Optional(Type.Boolean({ description: "Post a custom final transcript message when the async run completes. Defaults to true." })),
+	input_args: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Optional key-value pairs for prompt placeholder substitution. Keys like $1, $2 are replaced in the message. Numeric keys are sorted for deterministic ordering." })),
 });
 
 export const MASTRA_AGENT_ASYNC_STATUS_PARAMETERS = Type.Object({
@@ -773,12 +775,53 @@ export function createStreamRequest(params: MastraAgentCallInput, threadId: stri
 	const requestContext = { ...(params.requestContext ?? {}) };
 	if (params.modeId) requestContext[REQUEST_CONTEXT_MODE_ID_KEY] = params.modeId;
 
+	const message = params.message;
+
+	// Handle input_args: validate keys, sort numerically, append section, mirror to context
+	if (params.input_args && Object.keys(params.input_args).length > 0) {
+		// Validate that all keys match the placeholder pattern ^\$[1-9][0-9]*$
+		for (const key of Object.keys(params.input_args)) {
+			if (typeof key !== "string" || !/^\$[1-9][0-9]*$/.test(key)) {
+				throw new Error(`input_args placeholder key must match pattern ^\\$[1-9][0-9]*$, got: ${JSON.stringify(key)}`);
+			}
+		}
+
+		// Sort keys numerically by extracting the number after the $ prefix
+		const sortedKeys = Object.keys(params.input_args).sort((a, b) => {
+			const numA = parseInt(a.slice(1), 10);
+			const numB = parseInt(b.slice(1), 10);
+			return numA - numB;
+		});
+
+		// Build the "Input arguments:" section with numeric ordering
+		const argsLines: string[] = [];
+		for (const key of sortedKeys) {
+			const value = params.input_args[key];
+			if (value !== undefined) {
+				argsLines.push(`- ${key}: ${value}`);
+			}
+		}
+
+		// Preserve literal placeholders in message body; append input_args section with instruction
+		if (argsLines.length > 0) {
+			const inputArgsSection = `Input arguments:\n${argsLines.join("\n")}\n\nUse the above arguments when referencing placeholders like ${sortedKeys.join(", ")} in your response.`;
+			requestContext.input_args = params.input_args;
+
+			return {
+				messages: [{ role: "user", content: `${message}\n\n${inputArgsSection}` }],
+				memory: { thread: threadId, resource: resourceId },
+				maxSteps: params.maxSteps,
+				activeTools: params.activeTools,
+				requestContext: Object.keys(requestContext).length > 0 ? requestContext : undefined,
+				input_args: params.input_args,
+			};
+		}
+	}
+
+	// No input_args: return standard request
 	return {
-		messages: [{ role: "user", content: params.message }],
-		memory: {
-			thread: threadId,
-			resource: resourceId,
-		},
+		messages: [{ role: "user", content: message }],
+		memory: { thread: threadId, resource: resourceId },
 		maxSteps: params.maxSteps,
 		activeTools: params.activeTools,
 		requestContext: Object.keys(requestContext).length > 0 ? requestContext : undefined,

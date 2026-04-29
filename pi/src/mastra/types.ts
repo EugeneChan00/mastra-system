@@ -19,7 +19,11 @@ export interface MastraAgentCallInput {
 	includeToolResults?: boolean;
 	includeReasoning?: boolean;
 	timeoutMs?: number;
+	input_args?: MastraAgentInputArgs;
 }
+
+/** Key-value pairs for prompt placeholder substitution. Keys must match ^\$[1-9][0-9]*$ */
+export type MastraAgentInputArgs = Record<string, string>;
 
 export interface MastraAgentStatusInput {
 	agentId: string;
@@ -75,6 +79,7 @@ export interface MastraStreamRequest {
 	maxSteps?: number;
 	activeTools?: string[];
 	requestContext?: Record<string, unknown>;
+	input_args?: MastraAgentInputArgs;
 }
 
 export interface MastraWorkflowStepInfo {
