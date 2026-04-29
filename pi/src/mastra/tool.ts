@@ -151,21 +151,31 @@ export class MastraAsyncAgentManager {
 		const jobId = normalizeJobId(params.jobId);
 		if (this.jobs.has(jobId)) throw new Error(`Async Mastra agent job already exists: ${jobId}`);
 
-		const details = createInitialDetails(params);
+		// Async jobs for the same agent can run concurrently. If they share the
+		// normal per-agent default thread, Mastra's thread-scoped memory and
+		// observability can serialize or merge their streams, making TUI cards look
+		// like only one job is live. Use the normalized job id to isolate default
+		// async runs while still honoring an explicit caller-provided threadId.
+		const effectiveParams: MastraAgentStartInput = {
+			...params,
+			jobId,
+			threadId: params.threadId ?? defaultAsyncThreadId(params.agentId, jobId),
+		};
+		const details = createInitialDetails(effectiveParams);
 		const artifactDir = await mkdtemp(join(tmpdir(), `${jobId}-`));
 		const job: MastraAsyncAgentJob = {
 			jobId,
-			params,
+			params: effectiveParams,
 			details,
 			controller: new AbortController(),
 			artifactPath: join(artifactDir, "output.txt"),
 			eventsPath: join(artifactDir, "events.jsonl"),
-			finalMessage: params.finalMessage !== false,
+			finalMessage: effectiveParams.finalMessage !== false,
 		};
 		this.jobs.set(jobId, job);
-		this.options.activitySink?.start(jobId, params, details);
+		this.options.activitySink?.start(jobId, effectiveParams, details);
 
-		const request = createStreamRequest(params, details.threadId, details.resourceId);
+		const request = createStreamRequest(effectiveParams, details.threadId, details.resourceId);
 		void this.run(job, request);
 		return this.summary(job);
 	}
@@ -1051,6 +1061,10 @@ function normalizeJobId(value?: string): string {
 	const trimmed = value?.trim();
 	if (trimmed) return trimmed.replace(/[^a-zA-Z0-9._-]/g, "-");
 	return `mastra-agent-${Date.now()}-${randomUUID().slice(0, 8)}`;
+}
+
+function defaultAsyncThreadId(agentId: string, jobId: string): string {
+	return `${defaultThreadId(agentId)}:${jobId}`;
 }
 
 function clampMaxChars(value?: number): number {
