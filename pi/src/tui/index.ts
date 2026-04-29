@@ -35,18 +35,14 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
 // These phrases appear in agent instructions/system-prompt but must not
 // surface as visible card content.
 const FILTER_PROMPT_SCAFFOLDING_PATTERNS: RegExp[] = [
-	// Strip label + colon and the value word that immediately follows on the same line.
-	/Expected return status[:\s]+[^\n\r.:;,]*/gi,
-	/Expected return format[:\s]+[^\n\r.:;,]*/gi,
-	/expected return (?:status|format|value)[:\s]+[^\n\r.:;,]*/gi,
-	/worker[- ]?brief[:\s]+[^\n\r.:;,]*/gi,
-	/internal instruction[:\s]+[^\n\r.:;,]*/gi,
-	/do not show[:\s]+[^\n\r.:;,]*/gi,
-	// Strip the label even when it appears alone (no following value on the same line).
-	/Expected return (?:status|format|value)[\s]*$/gim,
-	/worker[- ]?brief[\s]*$/gim,
-	/internal instruction[\s]*$/gim,
-	/do not show[\s]*$/gim,
+	// Strip label + whitespace before the value word on the same line.
+	// The value word is preserved; only the internal scaffolding label is removed.
+	/Expected return status[:\s]*/gi,
+	/Expected return format[:\s]*/gi,
+	/expected return (?:status|format|value)[:\s]*/gi,
+	/worker[- ]?brief[:\s]*/gi,
+	/internal instruction[:\s]*/gi,
+	/do not show[:\s]*/gi,
 ];
 
 /**
