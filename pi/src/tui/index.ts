@@ -212,9 +212,9 @@ export class MastraAgentsWidget implements Component {
 			const maxBodyLines = Math.max(3, this.options.cardBodyLines ?? perCardTotalLines - 2);
 			// Cards align to the left gutter. Pi widget slot placement (aboveEditor /
 			// belowEditor) anchors to the content edge, so no horizontal offset is
-			// applied. cardWidth limits the card content width; overflow is truncated
-			// at the right rather than right-aligned.
-			const cardWidth = Math.min(width, Math.max(12, this.options.cardWidth ?? 96));
+			// applied. cardWidth can optionally limit the card content width; by
+			// default, async cards use the full available widget width.
+			const cardWidth = Math.min(width, Math.max(12, this.options.cardWidth ?? width));
 			const lines: string[] = [];
 
 			for (let i = 0; i < visibleCards.length; i++) {
