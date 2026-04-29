@@ -394,6 +394,9 @@ export function createMastraAgentStartTool(manager: MastraAsyncAgentManager) {
 			"After mastra_agent_start returns a jobId, use mastra_agent_read or mastra_agent_async_status to inspect the result instead of rerunning the agent.",
 		],
 		parameters: MASTRA_AGENT_START_PARAMETERS,
+		// The async starter returns a model-visible receipt, but live progress is
+		// rendered by MastraAgentsWidget. Self-rendering an empty component prevents
+		// a duplicate static `mastra async` card from competing with the live card.
 		renderShell: "self" as const,
 		async execute(_toolCallId: string, params: MastraAgentStartInput, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
 			if (signal?.aborted) {
@@ -1085,6 +1088,9 @@ function textContent(result: AgentToolResult<unknown>): string {
 }
 
 function emptyComponent() {
+	// ToolExecutionComponent hides self-rendered tools whose call/result renderers
+	// produce no lines. This keeps transcript UI focused on the live async widget
+	// while preserving the tool result for the parent model.
 	return {
 		render: () => [],
 		invalidate() {},

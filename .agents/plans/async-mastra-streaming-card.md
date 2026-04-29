@@ -289,6 +289,16 @@ npm run test --workspace @mastrasystem/pi
 - Existing sync `mastra_agent_call` rendering remains unchanged.
 - Existing async manager start/read/cancel tests still pass.
 
+## Implementation Map: Why Each Element Exists
+
+- `MastraAsyncAgentManager` (`pi/src/mastra/tool.ts`) owns the background stream lifecycle so `mastra_agent_start` can return a `jobId` immediately while work continues.
+- `MastraAgentActivityStore` (`pi/src/tui/index.ts`) is the bridge between background streams and TUI rendering. It stores summary fields for status lines and a full `MastraAgentCallDetails` snapshot for rich card rendering.
+- `MastraAgentsWidget` (`pi/src/tui/index.ts`) is the live surface. It reuses `MastraAgentCard` so async and sync calls share the same card layout, right-aligns inside Pi's valid `aboveEditor` widget placement, and splits height across up to two cards for concurrent jobs.
+- `MastraAgentCardOptions.maxBodyLines` (`pi/src/tui/index.ts`) lets the widget bound each card's body height without changing expanded sync tool-card behavior.
+- Empty self-rendering for `mastra_agent_start` (`pi/src/mastra/tool.ts`) hides the static tool card because the live widget is now the authoritative async visual surface. The tool still returns its receipt to the parent model.
+- Idle timeout reset (`pi/src/mastra/client.ts`) prevents healthy long-running streams from being killed while SSE chunks are still arriving.
+- Completion `pi.sendMessage(..., { deliverAs: "followUp", triggerTurn: true })` (`pi/src/extensions/index.ts`) persists one concise final result and wakes the parent agent if it has gone idle.
+
 ## Acceptance Criteria
 
 - `mastra_agent_start` returns immediately with `jobId`.
