@@ -33,7 +33,6 @@ export function normalizeMastraChunk(chunk: unknown): NormalizedMastraEvent {
 		case TOOL_INPUT_END:
 			return { kind: "tool", event: makeToolEvent("input-end", chunk) };
 		case "finish":
-		case "step-finish":
 			return { kind: "finish", usage: usageFrom(chunk), raw: chunk };
 		case "error":
 			return { kind: "error", message: textFrom(chunk, "message", "error", "text") || "Mastra stream error", raw: chunk };
@@ -68,6 +67,8 @@ export function applyNormalizedEvent(details: MastraAgentCallDetails, event: Nor
 	if (event.kind === "finish") {
 		details.status = "done";
 		details.completedAt = details.updatedAt;
+		details.terminalReason = "finish";
+		details.incomplete = false;
 		if (event.usage) details.usage = event.usage;
 		return;
 	}
@@ -75,6 +76,8 @@ export function applyNormalizedEvent(details: MastraAgentCallDetails, event: Nor
 	if (event.kind === "error") {
 		details.status = "error";
 		details.completedAt = details.updatedAt;
+		details.terminalReason = "error";
+		details.incomplete = false;
 		details.errors.push(event.message);
 	}
 }

@@ -10,6 +10,7 @@ export type MastraAgentsResponse = Record<string, MastraAgentInfo>;
 export interface MastraAgentCallInput {
 	agentId: string;
 	message: string;
+	jobName?: string;
 	modeId?: string;
 	threadId?: string;
 	resourceId?: string;
@@ -61,10 +62,26 @@ export interface MastraAgentInspection {
 	raw: MastraAgentInfo;
 }
 
+export type MastraAgentLifecycleStatus = "available" | "working" | "agent_response_queued" | "ended";
+
+export interface MastraAgentInspectJob {
+	jobId?: string;
+	jobName?: string;
+	agentId: string;
+	status: MastraAgentLifecycleStatus;
+	threadId?: string;
+	resourceId?: string;
+	runId?: string;
+	workflowId?: string;
+	updatedAt?: number;
+}
+
 export interface MastraAgentInspectDetails {
 	agents: MastraAgentInspection[];
 	count: number;
 	errors: Array<{ agentId: string; error: string }>;
+	availableAgents?: MastraAgentInspectJob[];
+	jobs?: MastraAgentInspectJob[];
 }
 
 export interface MastraStreamRequest {
@@ -124,6 +141,15 @@ export interface MastraWorkflowStreamRequest {
 	closeOnSuspend?: boolean;
 }
 
+export interface MastraWorkflowAsyncStartRequest extends MastraWorkflowStreamRequest {}
+
+export interface MastraWorkflowRunsListInput {
+	resourceId?: string;
+	status?: string;
+	page?: number;
+	perPage?: number;
+}
+
 export interface MastraWorkflowStatusInput {
 	workflowId: string;
 	runId: string;
@@ -177,6 +203,7 @@ export interface MastraWorkflowCallDetails {
 }
 
 export type MastraStreamStatus = "running" | "done" | "error" | "aborted";
+export type MastraTerminalReason = "finish" | "error" | "abort" | "stream_eof";
 
 export interface MastraToolEvent {
 	id?: string;
@@ -214,16 +241,20 @@ export interface MastraAgentCallDetails {
 	chunksTruncated: boolean;
 	errors: string[];
 	rawChunkCount: number;
+	terminalReason?: MastraTerminalReason;
+	incomplete?: boolean;
 }
 
 export interface MastraAgentStartInput extends MastraAgentCallInput {
 	jobId?: string;
+	piSessionId?: string;
 	finalMessage?: boolean;
 }
 
 export interface MastraAgentQueryInput {
 	agentId: string;
 	message: string;
+	jobName?: string;
 	synchronous?: boolean;
 	threadId?: string;
 	resourceId?: string;
@@ -251,10 +282,15 @@ export interface MastraAgentCancelInput {
 
 export interface MastraAgentAsyncJobSummary {
 	jobId: string;
+	jobName?: string;
 	agentId: string;
 	modeId?: string;
 	threadId: string;
 	resourceId: string;
+	piSessionId?: string;
+	runId?: string;
+	workflowId?: string;
+	lifecycleStatus?: MastraAgentLifecycleStatus;
 	status: MastraStreamStatus;
 	startedAt?: number;
 	updatedAt?: number;
@@ -269,6 +305,8 @@ export interface MastraAgentAsyncJobSummary {
 	rawChunkCount: number;
 	chunksTruncated: boolean;
 	errors: string[];
+	terminalReason?: MastraTerminalReason;
+	incomplete?: boolean;
 	artifactPath?: string;
 	eventsPath?: string;
 }

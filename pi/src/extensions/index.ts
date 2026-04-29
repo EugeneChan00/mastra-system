@@ -4,6 +4,7 @@ import { MASTRA_AGENT_RESULT_MESSAGE_TYPE, MASTRA_STATUS_KEY } from "../const.js
 import { MastraAsyncAgentManager, MastraHttpClient, createMastraTools } from "../mastra/index.js";
 import { MastraAgentActivityStore, MastraAgentsWidget } from "../tui/index.js";
 import type { MastraAgentAsyncJobSummary, MastraAgentInfo, MastraWorkflowInfo, MastraWorkflowRun } from "../mastra/index.js";
+import { loadMastraAgentExtensionConfig } from "./config.js";
 
 export default function mastraPiExtension(pi: ExtensionAPI) {
 	const client = new MastraHttpClient();
@@ -12,8 +13,9 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 		activitySink: activityStore,
 		onComplete: (summary) => {
 			// Live deltas stay in MastraAgentsWidget; only the final summary becomes a
-			// transcript message. triggerTurn wakes the parent agent if the async job
-			// finishes after the original Pi turn has gone idle.
+			// transcript reminder. "steer" queues it as a system reminder as soon as
+			// Pi can accept context between tool calls; message_end is the ack that
+			// collapses the card.
 			pi.sendMessage(
 				{
 					customType: MASTRA_AGENT_RESULT_MESSAGE_TYPE,
@@ -21,7 +23,7 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 					display: true,
 					details: summary,
 				},
-				{ deliverAs: "followUp", triggerTurn: true },
+				{ deliverAs: "steer", triggerTurn: true },
 			);
 		},
 	});
@@ -92,8 +94,20 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		unsubscribeActivityStatus?.();
+		const piSessionId = ctx.sessionManager.getSessionId();
+		asyncAgentManager.configureSession({
+			piSessionId,
+			cwd: ctx.cwd,
+			isCompletionAcknowledged: (jobId) => hasCompletionReminder(ctx.sessionManager.getEntries(), jobId),
+		});
 		if (ctx.hasUI) {
-			ctx.ui.setWidget("mastra-agents", (tui, theme) => new MastraAgentsWidget(tui, theme, activityStore), { placement: "aboveEditor" });
+			const widgetConfig = await loadMastraAgentExtensionConfig(ctx.cwd);
+			if (widgetConfig.warning) ctx.ui.notify(widgetConfig.warning, "warning");
+			ctx.ui.setWidget(
+				"mastra-agents",
+				(tui, theme) => new MastraAgentsWidget(tui, theme, activityStore, widgetConfig.options),
+				{ placement: "aboveEditor" },
+			);
 		}
 		unsubscribeActivityStatus = activityStore.subscribe(() => {
 			const running = activityStore.snapshot({ includeFinished: false }).length;
@@ -108,10 +122,19 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 			statusLabel = "offline";
 			ctx.ui.setStatus(MASTRA_STATUS_KEY, "mastra: offline");
 		}
+
+		void asyncAgentManager.restoreSessionJobs().catch(() => undefined);
+	});
+
+	pi.on("message_end", async (event) => {
+		const message = event.message as { role?: string; customType?: string; details?: Partial<MastraAgentAsyncJobSummary> } | undefined;
+		if (message?.role !== "custom" || message.customType !== MASTRA_AGENT_RESULT_MESSAGE_TYPE) return;
+		const jobId = message.details?.jobId;
+		if (jobId) asyncAgentManager.markEnded(jobId);
 	});
 
 	pi.on("session_shutdown", async () => {
-		asyncAgentManager.cancelAll("Pi session shutdown", { suppressCompletionMessage: true });
+		asyncAgentManager.detachAll("Pi session shutdown");
 		unsubscribeActivityStatus?.();
 		unsubscribeActivityStatus = undefined;
 	});
@@ -220,16 +243,35 @@ function formatWorkflowRun(run: MastraWorkflowRun): string {
 
 function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary): string {
 	const lines = [
-		`Async Mastra agent job completed: ${summary.jobId}`,
+		"<system-reminder>",
+		`Asynchronous Mastra agent task completed: ${summary.jobId}`,
+		summary.jobName ? `jobName: ${summary.jobName}` : undefined,
 		`agentId: ${summary.agentId}`,
 		`status: ${summary.status}`,
+		summary.lifecycleStatus ? `lifecycleStatus: ${summary.lifecycleStatus}` : undefined,
+		summary.terminalReason ? `terminalReason: ${summary.terminalReason}` : undefined,
+		summary.incomplete ? "incomplete: true" : undefined,
 		summary.elapsedMs !== undefined ? `elapsed: ${formatDuration(summary.elapsedMs)}` : undefined,
 		summary.toolCalls + summary.toolResults > 0 ? `tools: ${summary.toolCalls + summary.toolResults}` : undefined,
+		summary.threadId ? `threadId: ${summary.threadId}` : undefined,
+		summary.runId ? `runId: ${summary.runId}` : undefined,
 		summary.artifactPath ? `artifactPath: ${summary.artifactPath}` : undefined,
 		`Use agent_read with jobId=${summary.jobId} before finalizing unless the initial user prompt explicitly said "pass the output" or "don't read the output".`,
+		summary.artifactPath ? "The artifactPath can be passed as an input_args value to another Mastra agent when chaining work." : undefined,
 		summary.errors.length > 0 ? `errors: ${summary.errors.join("; ")}` : undefined,
+		"</system-reminder>",
 	];
 	return lines.filter(Boolean).join("\n");
+}
+
+function hasCompletionReminder(entries: readonly unknown[], jobId: string): boolean {
+	return entries.some((entry) => {
+		if (typeof entry !== "object" || entry === null) return false;
+		const record = entry as Record<string, unknown>;
+		if (record.type !== "custom_message" || record.customType !== MASTRA_AGENT_RESULT_MESSAGE_TYPE) return false;
+		const details = record.details;
+		return typeof details === "object" && details !== null && (details as { jobId?: unknown }).jobId === jobId;
+	});
 }
 
 function formatDuration(ms: number): string {

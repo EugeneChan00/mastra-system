@@ -179,8 +179,8 @@ test("async agent manager uses unique default threads for concurrent jobs", asyn
 
 	await waitFor(() => requests.length === 2);
 	assert.notEqual(requests[0].memory.thread, requests[1].memory.thread);
-	assert.match(requests[0].memory.thread, /:job-one$/);
-	assert.match(requests[1].memory.thread, /:job-two$/);
+	assert.match(requests[0].memory.thread, /^pi-local-session-job-one-agent-pi-[a-f0-9]{12}$/);
+	assert.match(requests[1].memory.thread, /^pi-local-session-job-two-agent-pi-[a-f0-9]{12}$/);
 });
 
 
@@ -190,8 +190,12 @@ test("createMastraTools registers agent_query and preserves workflow tools", () 
 	const names = tools.map((tool) => tool.name);
 	assert.equal(names[0], "agent_query");
 	assert.equal((tools[0] as any).renderShell, "self");
-	assert.ok(names.includes("agent_call"));
-	assert.ok(names.includes("agent_start"));
+	assert.equal(names.includes("agent_call"), false);
+	assert.equal(names.includes("agent_start"), false);
+	assert.equal(names.includes("agent_list"), false);
+	assert.equal(names.includes("agent_status"), false);
+	assert.equal(names.includes("agent_async_status"), false);
+	assert.ok(names.includes("agent_inspect"));
 	assert.ok(names.includes("workflow_call"));
 	assert.ok(names.includes("workflow_list"));
 	assert.ok(names.includes("workflow_status"));
@@ -199,7 +203,7 @@ test("createMastraTools registers agent_query and preserves workflow tools", () 
 
 test("agent_query schema is narrower than lower-level agent tools", () => {
 	const properties = (MASTRA_AGENT_QUERY_PARAMETERS as any).properties;
-	for (const key of ["agentId", "message", "synchronous", "threadId", "resourceId", "requestContext", "includeToolResults", "includeReasoning", "timeoutMs", "input_args"]) {
+	for (const key of ["agentId", "message", "jobName", "synchronous", "threadId", "resourceId", "requestContext", "includeToolResults", "includeReasoning", "timeoutMs", "input_args"]) {
 		assert.ok(key in properties, `${key} should be exposed`);
 	}
 	assert.equal("maxSteps" in properties, false);
@@ -221,6 +225,7 @@ test("agent_query defaults to async and returns a job handle", async () => {
 	const result = await tool.execute("call", { agentId: "agent", message: "hello" });
 	assert.equal(starts.length, 1);
 	assert.equal(starts[0].includeReasoning, false);
+	assert.equal(starts[0].finalMessage, true);
 	assert.equal("maxSteps" in starts[0], false);
 	assert.equal("activeTools" in starts[0], false);
 	assert.equal((result.details as any).jobId, "query-job");
@@ -239,6 +244,7 @@ test("agent_query async path passes supported options through", async () => {
 	await tool.execute("call", {
 		agentId: "agent",
 		message: "hello $1",
+		jobName: "review-pass",
 		threadId: "thread-x",
 		resourceId: "resource-x",
 		requestContext: { tenant: "acme" },
@@ -250,6 +256,7 @@ test("agent_query async path passes supported options through", async () => {
 
 	assert.equal(starts[0].includeReasoning, true);
 	assert.equal(starts[0].includeToolResults, true);
+	assert.equal(starts[0].jobName, "review-pass");
 	assert.equal(starts[0].threadId, "thread-x");
 	assert.equal(starts[0].resourceId, "resource-x");
 	assert.equal(starts[0].timeoutMs, 123);
@@ -350,18 +357,86 @@ test("async agent manager starts immediately and captures streamed output", asyn
 		},
 	);
 
-	const started = await manager.start({ agentId: "agent", message: "prompt", jobId: "test-job" });
+	const started = await manager.start({ agentId: "agent", message: "prompt", jobId: "test-job", finalMessage: true });
 	assert.equal(started.jobId, "test-job");
 	assert.equal(started.status, "running");
 
-	await waitFor(() => completed);
+	await waitFor(() => {
+		const job = manager.get("test-job");
+		return job?.status === "done";
+	});
 	const summary = manager.get("test-job");
 	assert.equal(summary?.status, "done");
 	assert.equal(summary?.prompt, "prompt");
 	assert.ok(updates >= 2);
+	assert.ok(completed, "onComplete should fire when finalMessage: true");
 
 	const output = await manager.read({ jobId: "test-job", mode: "full" });
 	assert.equal(output.text, "hello world");
+});
+
+test("async agent manager fires onComplete callback by default", async () => {
+	let completed = false;
+	const manager = new MastraAsyncAgentManager(
+		{
+			async *streamAgent() {
+				yield { type: "finish" };
+			},
+		} as any,
+		{
+			onComplete() {
+				completed = true;
+			},
+		},
+	);
+
+	await manager.start({ agentId: "agent", message: "prompt", jobId: "default-no-message" });
+	await waitFor(() => manager.get("default-no-message")?.status === "done");
+	assert.equal(completed, true);
+});
+
+test("async agent manager suppresses onComplete during shutdown even if start is racing", async () => {
+	let completed = false;
+	const manager = new MastraAsyncAgentManager(
+		{
+			async *streamAgent() {
+				yield { type: "finish" };
+			},
+		} as any,
+		{
+			onComplete() {
+				completed = true;
+			},
+		},
+	);
+
+	void manager.start({ agentId: "agent", message: "prompt", jobId: "shutdown-job", finalMessage: true });
+	manager.cancelAll("test shutdown", { suppressCompletionMessage: true });
+	await waitFor(() => {
+		const job = manager.get("shutdown-job");
+		return job !== undefined && job.status !== "running";
+	});
+	assert.equal(completed, false);
+});
+
+test("async agent manager marks stream EOF without finish as incomplete error", async () => {
+	const manager = new MastraAsyncAgentManager({
+		async *streamAgent() {
+			yield { type: "text-delta", text: "partial output" };
+		},
+	} as any);
+
+	await manager.start({ agentId: "agent", message: "prompt", jobId: "incomplete-job" });
+	await waitFor(() => manager.get("incomplete-job")?.status === "error");
+
+	const summary = manager.get("incomplete-job");
+	assert.equal(summary?.terminalReason, "stream_eof");
+	assert.equal(summary?.incomplete, true);
+	assert.match(summary?.errors.join("\n") ?? "", /terminal finish event/);
+
+	const output = await manager.read({ jobId: "incomplete-job", mode: "tail" });
+	assert.match(output.text, /partial output/);
+	assert.match(output.text, /async job incomplete/);
 });
 
 test("uses Mastra workflow stream payload shape", () => {
@@ -439,6 +514,33 @@ test("agent inspect can include instructions when requested", async () => {
 	assert.equal(result.details.agents[0].instructions, "Use evidence.");
 	assert.equal(result.content[0].type, "text");
 	assert.match("text" in result.content[0] ? result.content[0].text : "", /Use evidence/);
+});
+
+test("agent inspect with no ids lists available agents and current session jobs", async () => {
+	const tool = createMastraAgentInspectTool({
+		listAgents: async () => ({
+			"developer-agent": { id: "developer-agent", name: "Developer" },
+			"validator-agent": { id: "validator-agent", name: "Validator" },
+		}),
+	} as any, {
+		inspectJobs: () => [
+			{
+				jobId: "job-1",
+				jobName: "implementation",
+				agentId: "developer-agent",
+				status: "working",
+				threadId: "thread",
+				resourceId: "resource",
+			},
+		],
+	} as any);
+
+	const result = await tool.execute("call", {});
+	assert.equal(result.details.availableAgents?.length, 1);
+	assert.equal(result.details.availableAgents?.[0]?.agentId, "validator-agent");
+	assert.equal(result.details.availableAgents?.[0]?.status, "available");
+	assert.equal(result.details.jobs?.[0]?.jobId, "job-1");
+	assert.match("text" in result.content[0] ? result.content[0].text : "", /availableAgents/);
 });
 
 

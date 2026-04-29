@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { filterPromptScaffolding, MastraAgentCard } from "./index.js";
-import type { MastraAgentCallDetails } from "../mastra/types.js";
+import { visibleWidth } from "@mariozechner/pi-tui";
+import { filterPromptScaffolding, MastraAgentActivityStore, MastraAgentCard, MastraAgentsWidget } from "./index.js";
+import type { MastraAgentCallDetails, MastraAgentCallInput } from "../mastra/types.js";
 
 // Stub theme matching the real Theme interface surface used by MastraAgentCard
 const stubTheme: Record<string, (...args: string[]) => string> = {
@@ -108,6 +109,127 @@ test("MastraAgentCard with partial streaming state shows correct status", () => 
 	// Border color for running status should be "accent" — verify card renders
 	assert.ok(lines.some((l) => l.includes("│")), "card should have frame borders");
 });
+
+test("MastraAgentsWidget uses default 4-card and 60-line budget", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 4; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: `output ${i}`,
+		}));
+	}
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store);
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(lines.filter((line) => line.includes("Mastra: agent-")).length, 4);
+	assert.ok(lines.length <= 60, `expected widget lines to honor default maxLines=60, got ${lines.length}`);
+});
+
+test("MastraAgentsWidget render uses full live width with no artificial cap", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-wide", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-wide",
+		status: "running",
+		text: "Working on the task.",
+	}));
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store);
+	const lines120 = widget.render(120);
+	const lines80 = widget.render(80);
+	widget.dispose();
+
+	const topBorder = lines120.find((line) => line.includes("Mastra: agent-wide"));
+	assert.ok(topBorder, "top border line should be present");
+	assert.equal(visibleWidth(topBorder), 120);
+	assert.ok(lines80.every((line) => visibleWidth(line) <= 80));
+	assert.notEqual(lines120.join(""), lines80.join(""));
+});
+
+test("MastraAgentsWidget keeps lingering done card slots stable", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 4; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: `output ${i}`,
+		}));
+	}
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store);
+	const before = widget.render(100).filter((line) => line.includes("Mastra: agent-"));
+	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
+	const after = widget.render(100).filter((line) => line.includes("Mastra: agent-"));
+	widget.dispose();
+
+	assert.deepEqual(after.map(agentLabel), before.map(agentLabel));
+	assert.ok(after[0].includes("done"));
+});
+
+test("MastraAgentsWidget keeps newest jobs visible with newest at the bottom", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 4; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: `output ${i}`,
+		}));
+	}
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4 });
+	widget.render(100);
+	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
+	store.start("call-5", { agentId: "agent-5", message: "task 5" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-5",
+		status: "running",
+		text: "output 5",
+	}));
+	const labels = widget.render(100).filter((line) => line.includes("Mastra: agent-")).map(agentLabel);
+	widget.dispose();
+
+	assert.deepEqual(labels, ["agent-2", "agent-3", "agent-4", "agent-5"]);
+});
+
+test("MastraAgentsWidget puts overflow marker at the top", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 5; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: `output ${i}`,
+		}));
+	}
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.match(lines[0], /\+1 more/);
+	assert.deepEqual(lines.filter((line) => line.includes("Mastra: agent-")).map(agentLabel), ["agent-2", "agent-3", "agent-4", "agent-5"]);
+});
+
+test("MastraAgentsWidget lets a single card use the total line budget", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n"),
+	}));
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4, maxLines: 30 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.ok(lines.length > 20, `single card should expand into budget, got ${lines.length}`);
+	assert.ok(lines.length <= 30, `expected maxLines cap, got ${lines.length}`);
+});
+
+function agentLabel(line: string): string {
+	const match = line.match(/Mastra: (agent-\d+)/);
+	return match?.[1] ?? line;
+}
 
 function makeDetails(overrides: Partial<MastraAgentCallDetails> = {}): MastraAgentCallDetails {
 	return {

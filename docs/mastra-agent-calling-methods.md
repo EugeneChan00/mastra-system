@@ -2,14 +2,13 @@
 
 This note documents how Pi calls Mastra agents in this workspace and how conversation memory identifiers are chosen by default.
 
-## Call surfaces
+## Call Surface
 
-Pi exposes two primary Mastra agent call tools:
+Pi exposes one primary Mastra agent query tool:
 
 | Tool | Use | Continuity behavior |
 |---|---|---|
-| `agent_call` | Synchronous call when the caller needs final output before continuing. | Sends a resolved `memory.thread` and `memory.resource` with the request. |
-| `agent_start` | Asynchronous/background call with live progress in the Pi TUI. | Uses the same default memory identifier resolution as `agent_call`. |
+| `agent_query` | Async-by-default Mastra agent query. Pass `synchronous: true` only when the caller needs final output before continuing. | Sends a resolved `memory.thread` and `memory.resource` with the request. |
 
 Supporting tools:
 
@@ -22,7 +21,7 @@ Supporting tools:
 
 ## Async output handoff
 
-After an `agent_start` job completes, the parent agent should call `agent_read` for that job before finalizing so it can incorporate the async agent output. The only exception is when the user's initial prompt explicitly opted out with wording such as `pass the output` or `don't read the output`.
+After an async `agent_query` job completes, the parent agent should call `agent_read` for that job before finalizing so it can incorporate the async agent output. The only exception is when the user's initial prompt explicitly opted out with wording such as `pass the output` or `don't read the output`.
 
 ## Default memory identifiers
 
@@ -36,11 +35,11 @@ threadId   = `pi:${sha256(`${cwd}:${process.pid}`).slice(0, 12)}:${agentId}`
 Source:
 
 - `pi/src/mastra/memory.ts` defines `defaultResourceId()` and `defaultThreadId()`.
-- `pi/src/mastra/tool.ts` resolves `params.resourceId ?? defaultResourceId()` and `params.threadId ?? defaultThreadId(params.agentId)` before creating the stream request.
+- `pi/src/mastra/tool.ts` resolves `params.resourceId ?? defaultResourceId()` and `params.threadId ?? defaultThreadId(params.agentId)` before creating the stream request. Async `agent_query` jobs use the job id as a default thread suffix so concurrent jobs for the same agent do not share a live stream thread.
 
 ## Default reuse behavior
 
-For repeated calls with no explicit `threadId` or `resourceId`:
+For repeated synchronous calls with no explicit `threadId` or `resourceId`:
 
 | Scenario | Default `resourceId` | Default `threadId` |
 |---|---|---|
@@ -49,7 +48,7 @@ For repeated calls with no explicit `threadId` or `resourceId`:
 | Pi restart, same working directory, same agent | Reused | New, because `process.pid` changes |
 | Different working directory | New | New |
 
-This means Pi does **not** create a fresh default thread for every call within the same running Pi process. It reuses the same default thread for the same agent, working directory, and process.
+This means synchronous `agent_query` does **not** create a fresh default thread for every call within the same running Pi process. Async `agent_query` jobs use `defaultThreadId(agentId):jobId` by default so concurrent background jobs stay isolated; pass an explicit `threadId` to opt into shared continuity.
 
 ## Starting a new conversation intentionally
 

@@ -25,6 +25,18 @@ npm run dev --workspace @mastrasystem/pi
 MASTRA_BASE_URL=http://localhost:4112/api npm run dev --workspace @mastrasystem/pi
 ```
 
+## Mastra Agent Widget Config
+
+The extension reads optional project config from `config.yaml` in the active Pi working directory:
+
+```yaml
+mastra-agent-extension:
+  maxCards: 4
+  maxLines: 60
+```
+
+Defaults are `maxCards: 4` and `maxLines: 60`. Agent cards always follow the live terminal width; there is no max-width cap.
+
 Run the live Mastra smoke check:
 
 ```bash

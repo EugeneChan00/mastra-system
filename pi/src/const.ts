@@ -2,8 +2,6 @@ export const MASTRA_API_PREFIX = "/api";
 export const DEFAULT_MASTRA_BASE_URL = `http://localhost:4111${MASTRA_API_PREFIX}`;
 export const MASTRA_BASE_URL_ENV = "MASTRA_BASE_URL";
 
-export const MASTRA_AGENT_CALL_TOOL_NAME = "agent_call";
-export const MASTRA_AGENT_START_TOOL_NAME = "agent_start";
 export const MASTRA_AGENT_READ_TOOL_NAME = "agent_read";
 export const MASTRA_AGENT_ASYNC_STATUS_TOOL_NAME = "agent_async_status";
 export const MASTRA_AGENT_CANCEL_TOOL_NAME = "agent_cancel";
@@ -12,6 +10,7 @@ export const MASTRA_AGENT_INSPECT_TOOL_NAME = "agent_inspect";
 export const MASTRA_AGENT_LIST_TOOL_NAME = "agent_list";
 export const MASTRA_AGENT_STATUS_TOOL_NAME = "agent_status";
 export const MASTRA_AGENT_QUERY_TOOL_NAME = "agent_query";
+export const MASTRA_PI_AGENT_JOB_WORKFLOW_ID = "pi.agent-job";
 export const MASTRA_WORKFLOW_CALL_TOOL_NAME = "workflow_call";
 export const MASTRA_WORKFLOW_LIST_TOOL_NAME = "workflow_list";
 export const MASTRA_WORKFLOW_STATUS_TOOL_NAME = "workflow_status";
@@ -50,6 +49,27 @@ export function workflowStreamPath(workflowId: string, runId: string): string {
 	return `${workflowPath(workflowId)}/stream?runId=${encodeURIComponent(runId)}`;
 }
 
+export function workflowStartAsyncPath(workflowId: string, runId?: string): string {
+	return `${workflowPath(workflowId)}/start-async${runId ? `?runId=${encodeURIComponent(runId)}` : ""}`;
+}
+
+export function workflowObservePath(workflowId: string, runId: string): string {
+	return `${workflowPath(workflowId)}/observe?runId=${encodeURIComponent(runId)}`;
+}
+
+export function workflowRunsPath(
+	workflowId: string,
+	options: { resourceId?: string; status?: string; page?: number; perPage?: number } = {},
+): string {
+	const params = new URLSearchParams();
+	if (options.resourceId) params.set("resourceId", options.resourceId);
+	if (options.status) params.set("status", options.status);
+	if (typeof options.page === "number") params.set("page", String(options.page));
+	if (typeof options.perPage === "number") params.set("perPage", String(options.perPage));
+	const query = params.toString();
+	return `${workflowPath(workflowId)}/runs${query ? `?${query}` : ""}`;
+}
+
 export function workflowRunPath(
 	workflowId: string,
 	runId: string,
@@ -64,4 +84,8 @@ export function workflowRunPath(
 	}
 	const query = params.toString();
 	return `${workflowPath(workflowId)}/runs/${encodeURIComponent(runId)}${query ? `?${query}` : ""}`;
+}
+
+export function workflowCancelRunPath(workflowId: string, runId: string): string {
+	return `${workflowPath(workflowId)}/runs/${encodeURIComponent(runId)}/cancel`;
 }

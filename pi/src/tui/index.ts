@@ -1,15 +1,10 @@
 import { getMarkdownTheme, type Theme, type ThemeColor } from "@mariozechner/pi-coding-agent";
 import type { Component, TUI as PiTUI } from "@mariozechner/pi-tui";
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
-import type { MastraAgentCallDetails, MastraAgentCallInput, MastraToolEvent, MastraUsage } from "../mastra/types.js";
+import type { MastraAgentCallDetails, MastraAgentCallInput, MastraAgentLifecycleStatus, MastraToolEvent, MastraUsage } from "../mastra/types.js";
 
-// Pi only gives extensions above/below-editor widget slots. The Mastra
-// activity surface uses the above-editor slot, so this line budget keeps live
-// async cards visible without pushing the prompt editor off screen.
-const DEFAULT_WIDGET_MAX_LINES = 28;
-// Show the two most relevant jobs directly. Extra jobs stay discoverable via
-// the overflow row and status/read tools instead of rendering partial cards.
-const DEFAULT_WIDGET_MAX_CARDS = 2;
+const DEFAULT_WIDGET_MAX_LINES = 60;
+const DEFAULT_WIDGET_MAX_CARDS = 4;
 const COLLAPSED_CARD_BODY_LINES = 18;
 const EXPANDED_CARD_BODY_LINES = 48; // 50 total lines including top/bottom borders.
 const COLLAPSED_PROMPT_LINES = 3;
@@ -66,6 +61,8 @@ export interface MastraAgentActivity {
 	threadId: string;
 	resourceId: string;
 	status: MastraAgentCallDetails["status"];
+	lifecycleStatus: Exclude<MastraAgentLifecycleStatus, "available">;
+	order: number;
 	startedAt: number;
 	updatedAt: number;
 	completedAt?: number;
@@ -81,7 +78,7 @@ export interface MastraAgentActivity {
 	 *
 	 * The summary fields above keep status/footer rendering cheap, while this
 	 * snapshot carries the text/tool arrays needed to reuse the same rich card
-	 * renderer used by synchronous `agent_call` results.
+	 * renderer used by synchronous `agent_query` results.
 	 */
 	details: MastraAgentCallDetails;
 }
@@ -90,16 +87,19 @@ export interface MastraAgentActivitySink {
 	start(toolCallId: string, params: MastraAgentCallInput, details: MastraAgentCallDetails): void;
 	update(toolCallId: string, details: MastraAgentCallDetails): void;
 	finish(toolCallId: string, details: MastraAgentCallDetails): void;
+	end?(toolCallId: string): void;
+	reset?(): void;
 }
 
 export class MastraAgentActivityStore implements MastraAgentActivitySink {
 	private readonly activities = new Map<string, MastraAgentActivity>();
 	private readonly listeners = new Set<() => void>();
+	private nextOrder = 0;
 
 	constructor(private readonly lingerMs = DEFAULT_ACTIVITY_LINGER_MS) {}
 
 	start(toolCallId: string, params: MastraAgentCallInput, details: MastraAgentCallDetails): void {
-		this.activities.set(toolCallId, activityFromDetails(toolCallId, details, undefined, params.message));
+		this.activities.set(toolCallId, activityFromDetails(toolCallId, details, undefined, params.message, "working", this.nextOrder++));
 		this.notify();
 	}
 
@@ -109,19 +109,24 @@ export class MastraAgentActivityStore implements MastraAgentActivitySink {
 	}
 
 	finish(toolCallId: string, details: MastraAgentCallDetails): void {
-		this.activities.set(toolCallId, activityFromDetails(toolCallId, details, this.activities.get(toolCallId)));
+		this.activities.set(toolCallId, activityFromDetails(toolCallId, details, this.activities.get(toolCallId), undefined, "agent_response_queued"));
+		this.notify();
+	}
+
+	end(toolCallId: string): void {
+		if (!this.activities.delete(toolCallId)) return;
 		this.notify();
 	}
 
 	snapshot(options: { includeFinished?: boolean } = {}): MastraAgentActivity[] {
 		this.cleanupExpired();
 		const includeFinished = options.includeFinished ?? true;
-		const values = Array.from(this.activities.values()).filter((activity) => includeFinished || activity.status === "running");
+		const values = Array.from(this.activities.values()).filter((activity) => includeFinished || activity.lifecycleStatus === "working" || activity.lifecycleStatus === "agent_response_queued");
 		return values.sort((a, b) => {
-			const aRunning = a.status === "running" ? 0 : 1;
-			const bRunning = b.status === "running" ? 0 : 1;
+			const aRunning = a.lifecycleStatus === "working" ? 0 : 1;
+			const bRunning = b.lifecycleStatus === "working" ? 0 : 1;
 			if (aRunning !== bRunning) return aRunning - bRunning;
-			return a.startedAt - b.startedAt;
+			return a.order - b.order;
 		});
 	}
 
@@ -136,13 +141,14 @@ export class MastraAgentActivityStore implements MastraAgentActivitySink {
 
 	reset(): void {
 		this.activities.clear();
+		this.nextOrder = 0;
 		this.notify();
 	}
 
 	private cleanupExpired(now = Date.now()): void {
 		let changed = false;
 		for (const [id, activity] of this.activities) {
-			if (activity.status === "running") continue;
+			if (activity.lifecycleStatus === "working" || activity.lifecycleStatus === "agent_response_queued") continue;
 			const linger = activity.status === "error" || activity.status === "aborted" ? ERROR_ACTIVITY_LINGER_MS : this.lingerMs;
 			const completedAt = activity.completedAt ?? activity.updatedAt;
 			if (now - completedAt > linger) {
@@ -163,8 +169,6 @@ export interface MastraAgentsWidgetOptions {
 	maxLines?: number;
 	/** Number of live/lingering async jobs rendered as full cards. */
 	maxCards?: number;
-	/** Card width before right-padding; controls the bottom-right visual anchor. */
-	cardWidth?: number;
 	/** Optional fixed body height per card; otherwise derived from maxLines. */
 	cardBodyLines?: number;
 }
@@ -172,6 +176,7 @@ export interface MastraAgentsWidgetOptions {
 export class MastraAgentsWidget implements Component {
 	private readonly unsubscribe: () => void;
 	private readonly timer: ReturnType<typeof setInterval>;
+	private visibleToolCallIds: string[] = [];
 
 	constructor(
 		private readonly tui: Pick<PiTUI, "requestRender">,
@@ -183,55 +188,51 @@ export class MastraAgentsWidget implements Component {
 		this.timer = setInterval(() => {
 			if (this.store.hasVisibleActivity()) this.tui.requestRender();
 		}, 160);
+		(this.timer as { unref?: () => void }).unref?.();
 	}
 
 	render(width: number): string[] {
 		if (width < 12) return [];
 		const activities = this.store.snapshot();
-		if (activities.length === 0) return [];
+		if (activities.length === 0) {
+			this.visibleToolCallIds = [];
+			return [];
+		}
 
 		const maxLines = Math.max(8, this.options.maxLines ?? DEFAULT_WIDGET_MAX_LINES);
-		const running = activities.filter((activity) => activity.status === "running");
+		const running = activities.filter((activity) => activity.lifecycleStatus === "working");
 		const th = this.theme;
 
-		// Running jobs are the actionable surface; completed jobs linger briefly as
-		// confirmation. This order makes multiple concurrent async agents visible
-		// instead of letting an older finished card hide an active stream.
-		const orderedActivities = [...running, ...activities.filter((a) => a.status !== "running")];
+		const orderedActivities = activities
+			.filter((activity) => activity.lifecycleStatus === "working" || activity.lifecycleStatus === "agent_response_queued")
+			.sort((a, b) => a.order - b.order);
 		const maxCards = Math.max(1, Math.floor(this.options.maxCards ?? DEFAULT_WIDGET_MAX_CARDS));
-		const visibleCards = orderedActivities.slice(0, maxCards);
+		const visibleCards = this.selectVisibleCards(orderedActivities, maxCards);
 		if (visibleCards.length > 0) {
-			// Split the available widget height across cards so launching two async
-			// agents yields two complete, bounded cards rather than half of one tall
-			// card. MastraAgentCard receives maxBodyLines as its per-card scroll budget.
-			const extra = Math.max(0, activities.length - visibleCards.length);
+			const extra = Math.max(0, orderedActivities.length - visibleCards.length);
 			const gapLines = Math.max(0, visibleCards.length - 1);
 			const overflowLines = extra > 0 ? 1 : 0;
 			const availableForCards = Math.max(5, maxLines - gapLines - overflowLines);
 			const perCardTotalLines = Math.max(5, Math.floor(availableForCards / visibleCards.length));
 			const maxBodyLines = Math.max(3, this.options.cardBodyLines ?? perCardTotalLines - 2);
-			// Cards align to the left gutter. Pi widget slot placement (aboveEditor /
-			// belowEditor) anchors to the content edge, so no horizontal offset is
-			// applied. cardWidth can optionally limit the card content width; by
-			// default, async cards use the full available widget width.
-			const cardWidth = Math.min(width, Math.max(12, this.options.cardWidth ?? width));
 			const lines: string[] = [];
+
+			if (extra > 0) lines.push(truncateToWidth(th.fg("dim", `+${extra} more`), width));
 
 			for (let i = 0; i < visibleCards.length; i++) {
 				const activity = visibleCards[i];
 				const cardLines = new MastraAgentCard(
 					activity.details,
-					{ isPartial: activity.status === "running", expanded: false, maxBodyLines },
+					{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: false, maxBodyLines },
 					th,
-				).render(cardWidth);
+				).render(width);
 				if (cardLines.length === 0) continue;
 				if (lines.length > 0) lines.push("");
 				lines.push(...cardLines);
 			}
 
 			if (lines.length > 0) {
-				if (extra > 0) lines.push(truncateToWidth(th.fg("dim", `└─ +${extra} more`), width));
-				return lines;
+				return lines.slice(0, maxLines);
 			}
 		}
 
@@ -257,8 +258,8 @@ export class MastraAgentsWidget implements Component {
 			lines.push(truncateToWidth(`${th.fg("dim", child + "⎿ ")}${th.fg(activity.errors.length > 0 ? "error" : "muted", tail)}`, width));
 		}
 
-		if (activities.length > visibleActivities.length) {
-			lines.push(truncateToWidth(th.fg("dim", `└─ +${activities.length - visibleActivities.length} more`), width));
+		if (orderedActivities.length > visibleActivities.length) {
+			lines.unshift(truncateToWidth(th.fg("dim", `+${orderedActivities.length - visibleActivities.length} more`), width));
 		}
 
 		return lines.slice(0, maxLines);
@@ -271,6 +272,12 @@ export class MastraAgentsWidget implements Component {
 	dispose(): void {
 		this.unsubscribe();
 		clearInterval(this.timer);
+	}
+
+	private selectVisibleCards(orderedActivities: MastraAgentActivity[], maxCards: number): MastraAgentActivity[] {
+		const visibleCards = orderedActivities.slice(-maxCards);
+		this.visibleToolCallIds = visibleCards.map((activity) => activity.toolCallId);
+		return visibleCards;
 	}
 }
 
@@ -346,6 +353,8 @@ export class MastraAgentCard implements Component {
 		const footerParts = [
 			this.details.threadId ? `thread ${shortId(this.details.threadId)}` : undefined,
 			this.details.rawChunkCount ? `${this.details.rawChunkCount} chunks` : undefined,
+			this.details.terminalReason ? `terminal ${this.details.terminalReason}` : undefined,
+			this.details.incomplete ? "incomplete" : undefined,
 			this.details.chunksTruncated ? "truncated" : undefined,
 		].filter(Boolean);
 		if (footerParts.length > 0) {
@@ -404,6 +413,8 @@ function activityFromDetails(
 	details: MastraAgentCallDetails,
 	previous?: MastraAgentActivity,
 	promptOverride?: string,
+	lifecycleStatus?: Exclude<MastraAgentLifecycleStatus, "available">,
+	orderOverride?: number,
 ): MastraAgentActivity {
 	const now = Date.now();
 	const mostRecentTool = recentToolEvents(details, 1)[0];
@@ -418,6 +429,8 @@ function activityFromDetails(
 		threadId: details.threadId,
 		resourceId: details.resourceId,
 		status: details.status,
+		lifecycleStatus: lifecycleStatus ?? previous?.lifecycleStatus ?? (details.status === "running" ? "working" : "agent_response_queued"),
+		order: previous?.order ?? orderOverride ?? now,
 		startedAt,
 		updatedAt,
 		completedAt,

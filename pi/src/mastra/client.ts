@@ -4,7 +4,11 @@ import {
 	agentsPath,
 	agentStreamPath,
 	workflowPath,
+	workflowCancelRunPath,
+	workflowObservePath,
 	workflowRunPath,
+	workflowRunsPath,
+	workflowStartAsyncPath,
 	workflowsPath,
 	workflowStreamPath,
 } from "../const.js";
@@ -15,6 +19,8 @@ import type {
 	MastraStreamRequest,
 	MastraWorkflowInfo,
 	MastraWorkflowRun,
+	MastraWorkflowRunsListInput,
+	MastraWorkflowAsyncStartRequest,
 	MastraWorkflowStreamRequest,
 	MastraWorkflowsResponse,
 } from "./types.js";
@@ -82,6 +88,49 @@ export class MastraHttpClient {
 		return body as MastraWorkflowRun;
 	}
 
+	async listWorkflowRuns(
+		workflowId: string,
+		options: MastraWorkflowRunsListInput & { signal?: AbortSignal } = {},
+	): Promise<MastraWorkflowRun[]> {
+		const body = await this.getJson(
+			workflowRunsPath(workflowId, options),
+			"Mastra workflow runs request failed",
+			options.signal,
+		);
+		if (Array.isArray(body)) return body as MastraWorkflowRun[];
+		if (isRecord(body) && Array.isArray(body.runs)) return body.runs as MastraWorkflowRun[];
+		throw new Error("Mastra workflow runs response was not an array");
+	}
+
+	async startWorkflowAsync(
+		workflowId: string,
+		runId: string,
+		payload: MastraWorkflowAsyncStartRequest,
+		options: { signal?: AbortSignal } = {},
+	): Promise<{ runId: string }> {
+		const body = await this.postJson(
+			workflowStartAsyncPath(workflowId, runId),
+			payload,
+			"Mastra workflow async start request failed",
+			options.signal,
+		);
+		if (isRecord(body) && typeof body.runId === "string") return { runId: body.runId };
+		return { runId };
+	}
+
+	async cancelWorkflowRun(
+		workflowId: string,
+		runId: string,
+		options: { signal?: AbortSignal } = {},
+	): Promise<unknown> {
+		return this.postJson(
+			workflowCancelRunPath(workflowId, runId),
+			{},
+			"Mastra workflow cancel request failed",
+			options.signal,
+		);
+	}
+
 	async *streamWorkflow(
 		workflowId: string,
 		runId: string,
@@ -92,6 +141,20 @@ export class MastraHttpClient {
 			workflowStreamPath(workflowId, runId),
 			payload,
 			"Mastra workflow stream request failed",
+			options,
+		);
+	}
+
+	async *observeWorkflow(
+		workflowId: string,
+		runId: string,
+		payload: MastraWorkflowStreamRequest = {},
+		options: { signal?: AbortSignal; timeoutMs?: number } = {},
+	): AsyncGenerator<unknown> {
+		yield* this.streamJsonEvents(
+			workflowObservePath(workflowId, runId),
+			payload,
+			"Mastra workflow observe request failed",
 			options,
 		);
 	}
@@ -115,6 +178,26 @@ export class MastraHttpClient {
 		}
 
 		return (await response.json()) as unknown;
+	}
+
+	private async postJson(path: string, payload: unknown, errorPrefix: string, signal?: AbortSignal): Promise<unknown> {
+		const response = await this.fetchImpl(joinMastraPath(this.baseUrl, path), {
+			method: "POST",
+			headers: {
+				accept: "application/json",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify(payload),
+			signal,
+		});
+
+		if (!response.ok) {
+			throw new Error(`${errorPrefix}: ${response.status} ${response.statusText}: ${await response.text()}`);
+		}
+
+		const text = await response.text();
+		if (!text.trim()) return {};
+		return JSON.parse(text) as unknown;
 	}
 
 	private async *streamJsonEvents(
