@@ -1,18 +1,54 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { MASTRA_STATUS_KEY } from "../const.js";
-import { MastraHttpClient, createMastraTools } from "../mastra/index.js";
+import { Text } from "@mariozechner/pi-tui";
+import { MASTRA_AGENT_RESULT_MESSAGE_TYPE, MASTRA_STATUS_KEY } from "../const.js";
+import { MastraAsyncAgentManager, MastraHttpClient, createMastraTools } from "../mastra/index.js";
 import { MastraAgentActivityStore, MastraAgentsWidget } from "../tui/index.js";
-import type { MastraAgentInfo, MastraWorkflowInfo, MastraWorkflowRun } from "../mastra/index.js";
+import type { MastraAgentAsyncJobSummary, MastraAgentInfo, MastraWorkflowInfo, MastraWorkflowRun } from "../mastra/index.js";
 
 export default function mastraPiExtension(pi: ExtensionAPI) {
 	const client = new MastraHttpClient();
 	const activityStore = new MastraAgentActivityStore();
+	const asyncAgentManager = new MastraAsyncAgentManager(client, {
+		activitySink: activityStore,
+		onComplete: (summary) => {
+			pi.sendMessage(
+				{
+					customType: MASTRA_AGENT_RESULT_MESSAGE_TYPE,
+					content: formatAsyncAgentCompletion(summary),
+					display: true,
+					details: summary,
+				},
+				{ deliverAs: "followUp" },
+			);
+		},
+	});
 	let unsubscribeActivityStatus: (() => void) | undefined;
 	let statusLabel = "offline";
 
-	for (const tool of createMastraTools(client, { agentActivitySink: activityStore })) {
+	for (const tool of createMastraTools(client, { agentActivitySink: activityStore, asyncAgentManager })) {
 		pi.registerTool(tool as any);
 	}
+
+	pi.registerMessageRenderer(MASTRA_AGENT_RESULT_MESSAGE_TYPE, (message, { expanded }, theme) => {
+		const summary = message.details as Partial<MastraAgentAsyncJobSummary> | undefined;
+		const status = String(summary?.status ?? "done");
+		const color = status === "error" || status === "aborted" ? "error" : "success";
+		let text = `${theme.fg(color, status === "done" ? "✓" : status === "running" ? "●" : "✗")} ${theme.fg("accent", summary?.agentId ?? "Mastra agent")}`;
+		if (summary?.jobId) text += ` ${theme.fg("dim", `job=${summary.jobId}`)}`;
+		text += `\n${message.content}`;
+		if (expanded && summary) {
+			const details = [
+				summary.threadId ? `threadId: ${summary.threadId}` : undefined,
+				summary.resourceId ? `resourceId: ${summary.resourceId}` : undefined,
+				summary.artifactPath ? `artifactPath: ${summary.artifactPath}` : undefined,
+				summary.eventsPath ? `eventsPath: ${summary.eventsPath}` : undefined,
+			]
+				.filter(Boolean)
+				.join("\n");
+			if (details) text += `\n${theme.fg("dim", details)}`;
+		}
+		return new Text(text, 0, 0);
+	});
 
 	pi.registerCommand("mastra", {
 		description: "Mastra bridge status and agent discovery",
@@ -72,6 +108,7 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		asyncAgentManager.cancelAll("Pi session shutdown", { suppressCompletionMessage: true });
 		unsubscribeActivityStatus?.();
 		unsubscribeActivityStatus = undefined;
 	});
@@ -176,4 +213,20 @@ function formatWorkflowRun(run: MastraWorkflowRun): string {
 	]
 		.filter(Boolean)
 		.join("\n");
+}
+
+function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary): string {
+	const header = [`jobId: ${summary.jobId}`, `status: ${summary.status}`];
+	if (summary.elapsedMs !== undefined) header.push(`elapsed: ${formatDuration(summary.elapsedMs)}`);
+	if (summary.toolCalls + summary.toolResults > 0) header.push(`tools: ${summary.toolCalls + summary.toolResults}`);
+	const body = summary.textPreview || (summary.errors.length > 0 ? summary.errors.join("\n") : "(no text output)");
+	const artifact = summary.artifactPath ? `\n\nFull output artifact: ${summary.artifactPath}` : "";
+	return `${header.join(" · ")}\n\n${body}${artifact}`;
+}
+
+function formatDuration(ms: number): string {
+	const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }

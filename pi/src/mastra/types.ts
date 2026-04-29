@@ -194,6 +194,7 @@ export interface MastraUsage {
 export interface MastraAgentCallDetails {
 	agentId: string;
 	modeId?: string;
+	prompt?: string;
 	threadId: string;
 	resourceId: string;
 	status: MastraStreamStatus;
@@ -208,6 +209,54 @@ export interface MastraAgentCallDetails {
 	chunksTruncated: boolean;
 	errors: string[];
 	rawChunkCount: number;
+}
+
+export interface MastraAgentStartInput extends MastraAgentCallInput {
+	jobId?: string;
+	finalMessage?: boolean;
+}
+
+export interface MastraAgentAsyncStatusInput {
+	jobId?: string;
+}
+
+export interface MastraAgentReadInput {
+	jobId: string;
+	mode?: "summary" | "tail" | "full" | string;
+	maxChars?: number;
+}
+
+export interface MastraAgentCancelInput {
+	jobId: string;
+	reason?: string;
+}
+
+export interface MastraAgentAsyncJobSummary {
+	jobId: string;
+	agentId: string;
+	modeId?: string;
+	threadId: string;
+	resourceId: string;
+	status: MastraStreamStatus;
+	startedAt?: number;
+	updatedAt?: number;
+	completedAt?: number;
+	elapsedMs?: number;
+	prompt?: string;
+	textPreview: string;
+	reasoningPreview?: string;
+	toolCalls: number;
+	toolResults: number;
+	usage?: MastraUsage;
+	rawChunkCount: number;
+	chunksTruncated: boolean;
+	errors: string[];
+	artifactPath?: string;
+	eventsPath?: string;
+}
+
+export interface MastraAgentAsyncJobDetails extends MastraAgentAsyncJobSummary {
+	details: MastraAgentCallDetails;
 }
 
 export type NormalizedMastraEvent =

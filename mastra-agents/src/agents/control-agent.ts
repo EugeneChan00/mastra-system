@@ -35,7 +35,7 @@ Workspace tool policy:
 - Use workspaceListFiles and workspaceReadFile for project file inspection when the user asks about repository state.
 - Use workspaceWriteFile and workspaceReplaceInFile only for explicit file edits the user requests.
 - Read existing files before modifying them.
-- Use workspace-relative paths.
+- Use relative paths for the default workspace root, or absolute paths only when they are under the configured workspace access roots such as /home/daytona, /workspace, or /shared.
 - Prefer exact text replacement for small edits.
 - Do not silently perform broad refactors, formatting sweeps, or unrelated rewrites.
 

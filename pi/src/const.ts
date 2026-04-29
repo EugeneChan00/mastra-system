@@ -3,6 +3,11 @@ export const DEFAULT_MASTRA_BASE_URL = `http://localhost:4111${MASTRA_API_PREFIX
 export const MASTRA_BASE_URL_ENV = "MASTRA_BASE_URL";
 
 export const MASTRA_AGENT_CALL_TOOL_NAME = "mastra_agent_call";
+export const MASTRA_AGENT_START_TOOL_NAME = "mastra_agent_start";
+export const MASTRA_AGENT_READ_TOOL_NAME = "mastra_agent_read";
+export const MASTRA_AGENT_ASYNC_STATUS_TOOL_NAME = "mastra_agent_async_status";
+export const MASTRA_AGENT_CANCEL_TOOL_NAME = "mastra_agent_cancel";
+export const MASTRA_AGENT_RESULT_MESSAGE_TYPE = "mastra-agent-result";
 export const MASTRA_AGENT_INSPECT_TOOL_NAME = "mastra_agent_inspect";
 export const MASTRA_AGENT_LIST_TOOL_NAME = "mastra_agent_list";
 export const MASTRA_AGENT_STATUS_TOOL_NAME = "mastra_agent_status";

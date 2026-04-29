@@ -7,7 +7,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "echo 'pi: dev not implemented'",
+    "dev": "node scripts/launch-pi.mjs",
+    "smoke:mastra": "npm run build && node scripts/mastra-live-smoke.mjs",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test \"dist/**/*.test.js\""

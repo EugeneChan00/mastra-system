@@ -4,6 +4,14 @@ import path from "node:path";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 
+import {
+  allowedWorkspaceRootsDescription,
+  resolveWorkspaceInputPath,
+  toWorkspacePath,
+  workspaceAccessRoots,
+  workspaceRoot,
+} from "../workspace-paths.js";
+
 type WorkspaceFile = {
   path: string;
   type: "file" | "directory";
@@ -13,10 +21,6 @@ type ListFilesInput = z.input<typeof listFilesQuerySchema>;
 type ReadFileInput = z.input<typeof readFileQuerySchema>;
 type WriteFileInput = z.input<typeof writeFileQuerySchema>;
 type ReplaceInFileInput = z.input<typeof replaceInFileQuerySchema>;
-
-const workspaceRoot = path.resolve(
-  process.env.MASTRA_WORKSPACE_ROOT ?? path.resolve(process.cwd(), "../.."),
-);
 
 const maxReadBytes = Number.parseInt(
   process.env.MASTRA_WORKSPACE_MAX_READ_BYTES ?? "200000",
@@ -30,6 +34,7 @@ const listFilesQuerySchema = z.object({
 
 const listFilesResultSchema = z.object({
   root: z.string(),
+  accessRoots: z.array(z.string()),
   directory: z.string(),
   entries: z.array(
     z.object({
@@ -72,25 +77,6 @@ const replaceInFileResultSchema = z.object({
   replacements: z.number().int(),
 });
 
-function assertRelativePath(inputPath: string): string {
-  if (path.isAbsolute(inputPath)) {
-    throw new Error("Use a workspace-relative path, not an absolute path.");
-  }
-
-  const resolvedPath = path.resolve(workspaceRoot, inputPath);
-  const relativePath = path.relative(workspaceRoot, resolvedPath);
-
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("Path escapes the configured workspace root.");
-  }
-
-  return resolvedPath;
-}
-
-function toWorkspacePath(absolutePath: string): string {
-  return path.relative(workspaceRoot, absolutePath) || ".";
-}
-
 async function listDirectoryEntries(
   directoryPath: string,
   maxDepth: number,
@@ -131,7 +117,7 @@ async function fileExists(filePath: string): Promise<boolean> {
 async function executeListFiles(query: ListFilesInput) {
   const directory = query.directory ?? ".";
   const maxDepth = query.maxDepth ?? 3;
-  const directoryPath = assertRelativePath(directory);
+  const directoryPath = resolveWorkspaceInputPath(directory);
   const stat = await fs.stat(directoryPath);
 
   if (!stat.isDirectory()) {
@@ -140,13 +126,14 @@ async function executeListFiles(query: ListFilesInput) {
 
   return {
     root: workspaceRoot,
+    accessRoots: workspaceAccessRoots,
     directory: toWorkspacePath(directoryPath),
     entries: await listDirectoryEntries(directoryPath, maxDepth),
   };
 }
 
 async function executeReadFile(query: ReadFileInput) {
-  const filePath = assertRelativePath(query.filePath);
+  const filePath = resolveWorkspaceInputPath(query.filePath);
   const stat = await fs.stat(filePath);
 
   if (!stat.isFile()) {
@@ -164,7 +151,7 @@ async function executeReadFile(query: ReadFileInput) {
 }
 
 async function executeWriteFile(query: WriteFileInput) {
-  const filePath = assertRelativePath(query.filePath);
+  const filePath = resolveWorkspaceInputPath(query.filePath);
   const overwrite = query.overwrite ?? false;
   const existed = await fileExists(filePath);
 
@@ -183,7 +170,7 @@ async function executeWriteFile(query: WriteFileInput) {
 }
 
 async function executeReplaceInFile(query: ReplaceInFileInput) {
-  const filePath = assertRelativePath(query.filePath);
+  const filePath = resolveWorkspaceInputPath(query.filePath);
   const content = await fs.readFile(filePath, "utf8");
   const matches = content.split(query.oldText).length - 1;
 
@@ -221,28 +208,28 @@ export const workspaceSchemas = {
 export const workspaceTools = {
   listFiles: createTool({
     id: "workspace.list-files",
-    description: "List files and directories under the configured workspace root.",
+    description: `List files and directories under the configured workspace root. Relative paths resolve under ${workspaceRoot}; absolute paths are allowed under: ${allowedWorkspaceRootsDescription()}.`,
     inputSchema: listFilesQuerySchema,
     outputSchema: listFilesResultSchema,
     execute: executeListFiles,
   }),
   readFile: createTool({
     id: "workspace.read-file",
-    description: "Read a UTF-8 text file from the configured workspace root.",
+    description: `Read a UTF-8 text file from the configured workspace root. Relative paths resolve under ${workspaceRoot}; absolute paths are allowed under: ${allowedWorkspaceRootsDescription()}.`,
     inputSchema: readFileQuerySchema,
     outputSchema: readFileResultSchema,
     execute: executeReadFile,
   }),
   writeFile: createTool({
     id: "workspace.write-file",
-    description: "Create or overwrite a UTF-8 text file under the configured workspace root.",
+    description: `Create or overwrite a UTF-8 text file under the configured workspace root. Relative paths resolve under ${workspaceRoot}; absolute paths are allowed under: ${allowedWorkspaceRootsDescription()}.`,
     inputSchema: writeFileQuerySchema,
     outputSchema: writeFileResultSchema,
     execute: executeWriteFile,
   }),
   replaceInFile: createTool({
     id: "workspace.replace-in-file",
-    description: "Replace exact text in a UTF-8 file under the configured workspace root.",
+    description: `Replace exact text in a UTF-8 file under the configured workspace root. Relative paths resolve under ${workspaceRoot}; absolute paths are allowed under: ${allowedWorkspaceRootsDescription()}.`,
     inputSchema: replaceInFileQuerySchema,
     outputSchema: replaceInFileResultSchema,
     execute: executeReplaceInFile,

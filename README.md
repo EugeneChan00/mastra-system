@@ -48,7 +48,7 @@ Supervisor + 6 specialist agents in the Daytona agents pattern (Eugenechan00/day
 **Tools:** Daytona sandbox (create/list/execute), workspace filesystem  
 **Scorers:** Prompt alignment, answer relevancy, toxicity  
 **Storage:** PostgresStore + DuckDBStore + FilesystemStore (composite)  
-**Sandbox:** DaytonaAgentsDaytonaSandbox — auto-reconciles mounts, detects working dir
+**Sandbox:** Auto current-sandbox LocalSandbox when already inside Daytona; DaytonaAgentsDaytonaSandbox for forced/remote Daytona workspaces
 
 See [daytona-agents](https://github.com/Eugenechan00/daytona-agents) for the reference implementation.
 
@@ -79,9 +79,9 @@ cp .env.example .env
 # Edit .env with your API keys and preferences
 ```
 
-### 3. Daytona sandbox (optional, for @mastrasystem/agents)
+### 3. Workspace sandbox (optional, for @mastrasystem/agents)
 
-Set the `DAYTONA_API_KEY` and `MASTRA_DAYTONA_ENDPOINT` in your `.env` to enable sandbox creation and management.
+When running inside an existing Daytona sandbox (`DAYTONA_SANDBOX_ID` is present), the Mastra workspace defaults to the current sandbox so agents can see `/home`, `/workspace`, and `/shared` volume mounts. Set `MASTRA_WORKSPACE_SANDBOX=daytona` plus `DAYTONA_API_KEY`/`DAYTONA_API_URL` to force a nested Daytona workspace sandbox.
 
 ## Environment variables
 
@@ -92,6 +92,9 @@ Set the `DAYTONA_API_KEY` and `MASTRA_DAYTONA_ENDPOINT` in your `.env` to enable
 | `MINIMAX_API_KEY` | MiniMax |
 | `DAYTONA_API_KEY` | Daytona sandbox API |
 | `MASTRA_DAYTONA_ENDPOINT` | Daytona server endpoint |
+| `MASTRA_WORKSPACE_SANDBOX` | `auto`/empty, `local`, or `daytona` workspace command sandbox |
+| `MASTRA_WORKSPACE_ACCESS_ROOTS` | Comma-separated absolute file-tool roots (defaults to `/` inside Daytona; use `/home/daytona,/shared` to narrow) |
+| `MASTRA_WORKSPACE_COMMAND_CWD` | Command cwd for the local/current sandbox workspace |
 | `MASTRA_CODE_MODEL` | Orchestrator model (default: rl/gpt-5.5) |
 | `MASTRA_SUBAGENT_MODEL` | Subagent model (default: minimax-coding-plan/MiniMax-M2.7) |
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMastraAgentInspectTool, createStreamRequest, createWorkflowStreamRequest, normalizeInspectAgentIds } from "./tool.js";
+import { MastraAsyncAgentManager, createMastraAgentInspectTool, createStreamRequest, createWorkflowStreamRequest, normalizeInspectAgentIds } from "./tool.js";
 
 test("omitted modeId leaves requestContext unchanged", () => {
 	const request = createStreamRequest(
@@ -29,6 +29,45 @@ test("uses Mastra memory payload shape", () => {
 	const request = createStreamRequest({ agentId: "agent", message: "hello" }, "thread", "resource");
 	assert.deepEqual(request.memory, { thread: "thread", resource: "resource" });
 	assert.deepEqual(request.messages, [{ role: "user", content: "hello" }]);
+});
+
+test("async agent manager starts immediately and captures streamed output", async () => {
+	let updates = 0;
+	let completed = false;
+	const manager = new MastraAsyncAgentManager(
+		{
+			async *streamAgent() {
+				yield { type: "text-delta", text: "hello" };
+				yield { type: "text-delta", text: " world" };
+				yield { type: "finish", usage: { totalTokens: 3 } };
+			},
+		} as any,
+		{
+			activitySink: {
+				start() {},
+				update() {
+					updates += 1;
+				},
+				finish() {},
+			},
+			onComplete() {
+				completed = true;
+			},
+		},
+	);
+
+	const started = await manager.start({ agentId: "agent", message: "prompt", jobId: "test-job" });
+	assert.equal(started.jobId, "test-job");
+	assert.equal(started.status, "running");
+
+	await waitFor(() => completed);
+	const summary = manager.get("test-job");
+	assert.equal(summary?.status, "done");
+	assert.equal(summary?.prompt, "prompt");
+	assert.ok(updates >= 2);
+
+	const output = await manager.read({ jobId: "test-job", mode: "full" });
+	assert.equal(output.text, "hello world");
 });
 
 test("uses Mastra workflow stream payload shape", () => {
@@ -107,3 +146,11 @@ test("agent inspect can include instructions when requested", async () => {
 	assert.equal(result.content[0].type, "text");
 	assert.match("text" in result.content[0] ? result.content[0].text : "", /Use evidence/);
 });
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+	const start = Date.now();
+	while (!predicate()) {
+		if (Date.now() - start > timeoutMs) throw new Error("Timed out waiting for predicate");
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+}

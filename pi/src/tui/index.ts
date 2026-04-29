@@ -5,7 +5,9 @@ import type { MastraAgentCallDetails, MastraAgentCallInput, MastraToolEvent, Mas
 
 const DEFAULT_WIDGET_MAX_LINES = 10;
 const COLLAPSED_CARD_BODY_LINES = 18;
-const EXPANDED_CARD_BODY_LINES = 60;
+const EXPANDED_CARD_BODY_LINES = 48; // 50 total lines including top/bottom borders.
+const COLLAPSED_PROMPT_LINES = 3;
+const EXPANDED_PROMPT_LINES = 8;
 const DEFAULT_ACTIVITY_LINGER_MS = 12_000;
 const ERROR_ACTIVITY_LINGER_MS = 30_000;
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -33,6 +35,7 @@ export interface MastraAgentActivity {
 	updatedAt: number;
 	completedAt?: number;
 	text: string;
+	prompt?: string;
 	lastEvent?: string;
 	toolCalls: number;
 	toolResults: number;
@@ -52,8 +55,8 @@ export class MastraAgentActivityStore implements MastraAgentActivitySink {
 
 	constructor(private readonly lingerMs = DEFAULT_ACTIVITY_LINGER_MS) {}
 
-	start(toolCallId: string, _params: MastraAgentCallInput, details: MastraAgentCallDetails): void {
-		this.activities.set(toolCallId, activityFromDetails(toolCallId, details));
+	start(toolCallId: string, params: MastraAgentCallInput, details: MastraAgentCallDetails): void {
+		this.activities.set(toolCallId, activityFromDetails(toolCallId, details, undefined, params.message));
 		this.notify();
 	}
 
@@ -151,7 +154,11 @@ export class MastraAgentsWidget implements Component {
 			const isLast = i === visibleActivities.length - 1 && activities.length <= visibleActivities.length;
 			const branch = isLast ? "└─" : "├─";
 			lines.push(truncateToWidth(`${th.fg("dim", branch)} ${formatActivityHeadline(activity, th)}`, width));
-			const tail = activity.errors[0] ? `error: ${activity.errors[activity.errors.length - 1]}` : activity.lastEvent || textTail(activity.text, 90) || "thinking…";
+			const progress = activity.lastEvent || textTail(activity.text, 90);
+			const prompt = activity.prompt ? `prompt: ${textHead(activity.prompt, 80)}` : undefined;
+			const tail = activity.errors[0]
+				? `error: ${activity.errors[activity.errors.length - 1]}`
+				: compactParts([prompt, progress ? `now: ${progress}` : undefined]) || "thinking…";
 			const child = isLast ? "   " : "│  ";
 			lines.push(truncateToWidth(`${th.fg("dim", child + "⎿ ")}${th.fg(activity.errors.length > 0 ? "error" : "muted", tail)}`, width));
 		}
@@ -203,6 +210,13 @@ export class MastraAgentCard implements Component {
 			.join(" ─ ");
 		lines.push(renderTopBorder(width, topLabel, meta, border));
 
+		const pinnedBodyLines: string[] = [];
+		const prompt = this.details.prompt?.trim();
+		if (prompt) {
+			pinnedBodyLines.push(th.fg("muted", "Prompt"));
+			pinnedBodyLines.push(...renderPromptLines(prompt, innerWidth, this.options.expanded === true, th));
+		}
+
 		const bodyLines: string[] = [];
 		const toolEvents = compactToolEvents(recentToolEvents(this.details, this.options.expanded ? 24 : 10));
 		if (toolEvents.length > 0) {
@@ -242,8 +256,10 @@ export class MastraAgentCard implements Component {
 			bodyLines.push(th.fg("dim", footerParts.join(" · ")));
 		}
 
+		if (pinnedBodyLines.length > 0 && bodyLines.length > 0) pinnedBodyLines.push("");
 		const bodyLimit = this.options.expanded ? EXPANDED_CARD_BODY_LINES : COLLAPSED_CARD_BODY_LINES;
-		const scrolledBody = tailLines(bodyLines, bodyLimit, th);
+		const remainingBodyLimit = Math.max(0, bodyLimit - pinnedBodyLines.length);
+		const scrolledBody = remainingBodyLimit > 0 ? [...pinnedBodyLines, ...tailLines(bodyLines, remainingBodyLimit, th)] : tailLines(pinnedBodyLines, bodyLimit, th);
 		for (const bodyLine of scrolledBody) {
 			lines.push(renderFrameRow(bodyLine, width, border));
 		}
@@ -291,6 +307,7 @@ function activityFromDetails(
 	toolCallId: string,
 	details: MastraAgentCallDetails,
 	previous?: MastraAgentActivity,
+	promptOverride?: string,
 ): MastraAgentActivity {
 	const now = Date.now();
 	const mostRecentTool = recentToolEvents(details, 1)[0];
@@ -309,6 +326,7 @@ function activityFromDetails(
 		updatedAt,
 		completedAt,
 		text: details.text,
+		prompt: details.prompt ?? promptOverride ?? previous?.prompt,
 		lastEvent,
 		toolCalls: details.toolCalls.length,
 		toolResults: details.toolResults.length,
@@ -482,6 +500,7 @@ function parseToolObject(value: unknown): Record<string, unknown> | undefined {
 }
 
 function toolResultText(value: unknown): string {
+	if (value === undefined || value === null) return "";
 	if (typeof value === "string") return value;
 	if (isPlainRecord(value)) {
 		if (typeof value.value === "string") return value.value;
@@ -556,6 +575,21 @@ function tailLines(lines: string[], limit: number, theme: Theme): string[] {
 	return [theme.fg("dim", `… ${lines.length - kept} earlier lines`), ...lines.slice(-kept)];
 }
 
+function headLines(lines: string[], limit: number, theme: Theme): string[] {
+	if (lines.length <= limit) return lines;
+	const kept = Math.max(1, limit - 1);
+	return [...lines.slice(0, kept), theme.fg("dim", `… ${lines.length - kept} more prompt lines`)];
+}
+
+function renderPromptLines(prompt: string, width: number, expanded: boolean, theme: Theme): string[] {
+	const maxChars = expanded ? 2_000 : 500;
+	const maxLines = expanded ? EXPANDED_PROMPT_LINES : COLLAPSED_PROMPT_LINES;
+	const trimmed = prompt.trim();
+	const clipped = trimmed.length <= maxChars ? trimmed : `${trimmed.slice(0, Math.max(0, maxChars - 1))}…`;
+	const lines = clipped.split("\n").flatMap((line) => (line.length === 0 ? [""] : wrapTextWithAnsi(theme.fg("dim", line), width)));
+	return headLines(lines, maxLines, theme);
+}
+
 function plainToolEvent(event: MastraToolEvent): string {
 	const name = event.name ?? event.id ?? "tool";
 	if (event.type === "result") return `${name} done`;
@@ -575,7 +609,8 @@ function prettyValue(value: unknown, maxChars: number): string {
 	if (typeof value === "string") text = value;
 	else {
 		try {
-			text = JSON.stringify(value, null, 2);
+			const json = JSON.stringify(value, null, 2);
+			text = typeof json === "string" ? json : String(value);
 		} catch {
 			text = String(value);
 		}
@@ -587,6 +622,12 @@ function textTail(text: string, maxChars: number): string {
 	const normalized = text.replace(/\s+/g, " ").trim();
 	if (normalized.length <= maxChars) return normalized;
 	return `…${normalized.slice(normalized.length - maxChars + 1)}`;
+}
+
+function textHead(text: string, maxChars: number): string {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	if (normalized.length <= maxChars) return normalized;
+	return `${normalized.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
 function markdownTail(text: string, maxChars: number): string {

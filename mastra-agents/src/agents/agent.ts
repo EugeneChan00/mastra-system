@@ -28,7 +28,7 @@ Do not describe these specialists as agents from the sibling coding harness. The
 
 # Project-specific execution policy
 
-- Use the Daytona-backed Mastra workspace as the normal coding environment.
+- Use the configured Mastra workspace as the normal coding environment; when Mastra is already inside Daytona, this is the current sandbox with its /home, /workspace, and /shared mounts.
 - Prefer list_files and read_file before deciding on edits.
 - Prefer write_file or edit_file for file changes when project-file mutation is required.
 - Use daytonaCheckApi and daytonaListSandboxes for control-plane diagnostics.
@@ -42,7 +42,7 @@ When useful, structure the final response with status, summary, facts, assumptio
 export const supervisorAgent = new Agent({
   id: "supervisor-agent",
   name: "Daytona Agents Supervisor",
-  description: "Streaming supervisor agent that delegates to specialist Mastra agents for Daytona-backed coding work.",
+  description: "Streaming supervisor agent that delegates to specialist Mastra agents for current-sandbox or Daytona-backed coding work.",
   instructions: supervisorPrompt,
   model: defaultSupervisorModel,
   memory: createAgentMemory(),
