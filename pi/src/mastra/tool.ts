@@ -60,7 +60,7 @@ export const MASTRA_AGENT_CALL_PARAMETERS = Type.Object({
 	includeToolResults: Type.Optional(Type.Boolean({ description: "Include tool result summaries in model-facing text" })),
 	includeReasoning: Type.Optional(Type.Boolean({ description: "Include reasoning deltas in model-facing text" })),
 	timeoutMs: Type.Optional(Type.Number({ description: "Stream timeout in milliseconds" })),
-	input_args: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Optional key-value pairs for prompt placeholder substitution. Keys like $1, $2 are replaced in the message. Numeric keys are sorted for deterministic ordering." })),
+	input_args: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Optional key-value pairs providing contextual bindings for literal placeholders like $1, $2 in the prompt body. Values are appended to the prompt section and mirrored into requestContext. Keys are sorted numerically." })),
 });
 
 export const MASTRA_AGENT_START_PARAMETERS = Type.Object({
@@ -75,7 +75,7 @@ export const MASTRA_AGENT_START_PARAMETERS = Type.Object({
 	timeoutMs: Type.Optional(Type.Number({ description: "Stream timeout in milliseconds" })),
 	jobId: Type.Optional(Type.String({ description: "Optional caller-provided async job id" })),
 	finalMessage: Type.Optional(Type.Boolean({ description: "Post a custom final transcript message when the async run completes. Defaults to true." })),
-	input_args: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Optional key-value pairs for prompt placeholder substitution. Keys like $1, $2 are replaced in the message. Numeric keys are sorted for deterministic ordering." })),
+	input_args: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Optional key-value pairs providing contextual bindings for literal placeholders like $1, $2 in the prompt body. Values are appended to the prompt section and mirrored into requestContext. Keys are sorted numerically." })),
 });
 
 export const MASTRA_AGENT_ASYNC_STATUS_PARAMETERS = Type.Object({
