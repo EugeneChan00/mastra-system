@@ -121,7 +121,7 @@ export const MASTRA_WORKFLOW_STATUS_PARAMETERS = Type.Object({
 	withNestedWorkflows: Type.Optional(Type.Boolean({ description: "Include nested workflow data in steps" })),
 });
 
-const DEFAULT_ASYNC_AGENT_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_ASYNC_AGENT_TIMEOUT_MS = 60 * 60_000;
 
 interface MastraAsyncAgentJob {
 	jobId: string;

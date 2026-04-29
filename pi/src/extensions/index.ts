@@ -18,7 +18,7 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 					display: true,
 					details: summary,
 				},
-				{ deliverAs: "followUp" },
+				{ deliverAs: "followUp", triggerTurn: true },
 			);
 		},
 	});

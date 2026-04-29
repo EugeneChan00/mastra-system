@@ -41,6 +41,8 @@ export interface MastraAgentActivity {
 	toolResults: number;
 	usage?: MastraUsage;
 	errors: string[];
+	/** Full details snapshot for card rendering. */
+	details: MastraAgentCallDetails;
 }
 
 export interface MastraAgentActivitySink {
@@ -141,14 +143,34 @@ export class MastraAgentsWidget implements Component {
 		if (activities.length === 0) return [];
 
 		const maxLines = Math.max(3, this.options.maxLines ?? DEFAULT_WIDGET_MAX_LINES);
-		const running = activities.filter((activity) => activity.status === "running").length;
+		const running = activities.filter((activity) => activity.status === "running");
 		const th = this.theme;
+
+		// Show one full MastraAgentCard for the newest running (or newest finished) activity.
+		const primary = running[0] ?? activities[running.length > 0 ? 0 : activities.length - 1];
+		if (primary) {
+			const cardWidth = Math.min(width, 96);
+			const pad = Math.max(0, width - cardWidth);
+			const cardLines = new MastraAgentCard(primary.details, { isPartial: primary.status === "running", expanded: false }, th).render(cardWidth);
+			if (cardLines.length > 0) {
+				const padded = cardLines.map((line) => " ".repeat(pad) + line);
+				const extra = activities.length - 1;
+				if (extra > 0) {
+					const overflow = th.fg("dim", `└─ +${extra} more`);
+					padded.push(overflow);
+				}
+				return padded.slice(0, maxLines);
+			}
+		}
+
+		// Fallback: compact list.
+		const allActivities = [...running, ...activities.filter((a) => a.status !== "running")];
 		const lines: string[] = [];
-		const titleIcon = running > 0 ? th.fg("accent", "●") : th.fg("success", "✓");
-		const title = `${titleIcon} ${th.bold("Mastra Agents")} ${th.fg("dim", `${running} running · ${activities.length} visible`)}`;
+		const titleIcon = running.length > 0 ? th.fg("accent", "●") : th.fg("success", "✓");
+		const title = `${titleIcon} ${th.bold("Mastra Agents")} ${th.fg("dim", `${running.length} running · ${activities.length} visible`)}`;
 		lines.push(truncateToWidth(title, width));
 
-		const visibleActivities = activities.slice(0, Math.max(0, maxLines - 2));
+		const visibleActivities = allActivities.slice(0, Math.max(0, maxLines - 2));
 		for (let i = 0; i < visibleActivities.length; i++) {
 			const activity = visibleActivities[i];
 			const isLast = i === visibleActivities.length - 1 && activities.length <= visibleActivities.length;
@@ -332,6 +354,12 @@ function activityFromDetails(
 		toolResults: details.toolResults.length,
 		usage: details.usage,
 		errors: [...details.errors],
+		details: {
+			...details,
+			toolCalls: [...details.toolCalls],
+			toolResults: [...details.toolResults],
+			errors: [...details.errors],
+		},
 	};
 }
 
