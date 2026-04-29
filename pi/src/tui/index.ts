@@ -30,6 +30,39 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
 	workspaceReplaceInFile: "edit_file",
 };
 
+// Patterns matched against TUI-displayed text to suppress internal prompt
+// scaffolding that is not useful to users in the rendered card output.
+// These phrases appear in agent instructions/system-prompt but must not
+// surface as visible card content.
+const FILTER_PROMPT_SCAFFOLDING_PATTERNS: RegExp[] = [
+	// Strip label + colon and the value word that immediately follows on the same line.
+	/Expected return status[:\s]+[^\n\r.:;,]*/gi,
+	/Expected return format[:\s]+[^\n\r.:;,]*/gi,
+	/expected return (?:status|format|value)[:\s]+[^\n\r.:;,]*/gi,
+	/worker[- ]?brief[:\s]+[^\n\r.:;,]*/gi,
+	/internal instruction[:\s]+[^\n\r.:;,]*/gi,
+	/do not show[:\s]+[^\n\r.:;,]*/gi,
+	// Strip the label even when it appears alone (no following value on the same line).
+	/Expected return (?:status|format|value)[\s]*$/gim,
+	/worker[- ]?brief[\s]*$/gim,
+	/internal instruction[\s]*$/gim,
+	/do not show[\s]*$/gim,
+];
+
+/**
+ * Remove internal prompt-scaffolding phrases from text before TUI display.
+ * Filters out patterns like "Expected return status", "Expected return format",
+ * and similar worker-brief metadata that provides no runtime value to the user.
+ */
+export function filterPromptScaffolding(text: string): string {
+	if (!text || typeof text !== "string") return text ?? "";
+	let filtered = text;
+	for (const pattern of FILTER_PROMPT_SCAFFOLDING_PATTERNS) {
+		filtered = filtered.replace(pattern, "");
+	}
+	return filtered.trim().replace(/\s{2,}/g, " ");
+}
+
 export interface MastraAgentActivity {
 	toolCallId: string;
 	agentId: string;
@@ -181,12 +214,11 @@ export class MastraAgentsWidget implements Component {
 			const availableForCards = Math.max(5, maxLines - gapLines - overflowLines);
 			const perCardTotalLines = Math.max(5, Math.floor(availableForCards / visibleCards.length));
 			const maxBodyLines = Math.max(3, this.options.cardBodyLines ?? perCardTotalLines - 2);
-			// Right-align by padding inside the widget. This is the supported way to
-			// approximate a bottom-right card because Pi has no `bottomRight` widget
-			// placement; valid placements are only `aboveEditor` and `belowEditor`.
+			// Cards align to the left gutter. Pi widget slot placement (aboveEditor /
+			// belowEditor) anchors to the content edge, so no horizontal offset is
+			// applied. cardWidth limits the card content width; overflow is truncated
+			// at the right rather than right-aligned.
 			const cardWidth = Math.min(width, Math.max(12, this.options.cardWidth ?? 96));
-			const pad = Math.max(0, width - cardWidth);
-			const leftPad = " ".repeat(pad);
 			const lines: string[] = [];
 
 			for (let i = 0; i < visibleCards.length; i++) {
@@ -198,11 +230,11 @@ export class MastraAgentsWidget implements Component {
 				).render(cardWidth);
 				if (cardLines.length === 0) continue;
 				if (lines.length > 0) lines.push("");
-				lines.push(...cardLines.map((line) => leftPad + line));
+				lines.push(...cardLines);
 			}
 
 			if (lines.length > 0) {
-				if (extra > 0) lines.push(truncateToWidth(`${leftPad}${th.fg("dim", `└─ +${extra} more`)}`, width));
+				if (extra > 0) lines.push(truncateToWidth(th.fg("dim", `└─ +${extra} more`), width));
 				return lines;
 			}
 		}
@@ -294,7 +326,7 @@ export class MastraAgentCard implements Component {
 			}
 		}
 
-		const text = this.details.text.trim() || (this.options.isPartial ? "streaming…" : "(no text output)");
+		const text = filterPromptScaffolding(this.details.text.trim()) || (this.options.isPartial ? "streaming…" : "(no text output)");
 		const textLimit = this.options.expanded ? 8_000 : 1_500;
 		if (bodyLines.length > 0) bodyLines.push("");
 		bodyLines.push(th.fg("muted", "Output"));
@@ -658,7 +690,7 @@ function headLines(lines: string[], limit: number, theme: Theme): string[] {
 function renderPromptLines(prompt: string, width: number, expanded: boolean, theme: Theme): string[] {
 	const maxChars = expanded ? 2_000 : 500;
 	const maxLines = expanded ? EXPANDED_PROMPT_LINES : COLLAPSED_PROMPT_LINES;
-	const trimmed = prompt.trim();
+	const trimmed = filterPromptScaffolding(prompt).trim();
 	const clipped = trimmed.length <= maxChars ? trimmed : `${trimmed.slice(0, Math.max(0, maxChars - 1))}…`;
 	const lines = clipped.split("\n").flatMap((line) => (line.length === 0 ? [""] : wrapTextWithAnsi(theme.fg("dim", line), width)));
 	return headLines(lines, maxLines, theme);
@@ -675,7 +707,8 @@ function plainToolEvent(event: MastraToolEvent): string {
 
 function previewValue(value: unknown, maxChars: number): string {
 	const text = prettyValue(value, maxChars).replace(/\s+/g, " ").trim();
-	return text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 1))}…`;
+	const filtered = filterPromptScaffolding(text);
+	return filtered.length <= maxChars ? filtered : `${filtered.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
 function prettyValue(value: unknown, maxChars: number): string {
