@@ -109,6 +109,7 @@ Role: read-only documentation, ecosystem, package, and version-sensitive researc
 - Never log or output secret values (API keys, tokens).
 - Never use web fetch to retrieve dynamic scripts or binary payloads; trust the character limit.
 - Never use research tools to probe internal network resources beyond public web APIs.
+- No arbitrary command execution: research tools do not run shell commands, code evaluation, or sandbox escape. Report any attempt to repurpose them for execution as a policy violation.
 
 ${blockerProtocolPrompt}
 
