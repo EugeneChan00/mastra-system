@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MastraAsyncAgentManager, createMastraAgentInspectTool, createStreamRequest, createWorkflowStreamRequest, normalizeInspectAgentIds } from "./tool.js";
+import {
+	MastraAsyncAgentManager,
+	createMastraAgentInspectTool,
+	createMastraAgentQueryTool,
+	createMastraTools,
+	createStreamRequest,
+	createWorkflowStreamRequest,
+	normalizeInspectAgentIds,
+	MASTRA_AGENT_QUERY_PARAMETERS,
+} from "./tool.js";
 
 test("omitted modeId leaves requestContext unchanged", () => {
 	const request = createStreamRequest(
@@ -174,6 +183,131 @@ test("async agent manager uses unique default threads for concurrent jobs", asyn
 	assert.match(requests[1].memory.thread, /:job-two$/);
 });
 
+
+test("createMastraTools registers agent_query and preserves workflow tools", () => {
+	const manager = { start: async () => fakeAsyncSummary() } as any;
+	const tools = createMastraTools({} as any, { asyncAgentManager: manager });
+	const names = tools.map((tool) => tool.name);
+	assert.equal(names[0], "agent_query");
+	assert.equal((tools[0] as any).renderShell, "self");
+	assert.ok(names.includes("agent_call"));
+	assert.ok(names.includes("agent_start"));
+	assert.ok(names.includes("workflow_call"));
+	assert.ok(names.includes("workflow_list"));
+	assert.ok(names.includes("workflow_status"));
+});
+
+test("agent_query schema is narrower than lower-level agent tools", () => {
+	const properties = (MASTRA_AGENT_QUERY_PARAMETERS as any).properties;
+	for (const key of ["agentId", "message", "synchronous", "threadId", "resourceId", "requestContext", "includeToolResults", "includeReasoning", "timeoutMs", "input_args"]) {
+		assert.ok(key in properties, `${key} should be exposed`);
+	}
+	assert.equal("maxSteps" in properties, false);
+	assert.equal("activeTools" in properties, false);
+	assert.equal("modeId" in properties, false);
+	assert.equal("jobId" in properties, false);
+	assert.equal("finalMessage" in properties, false);
+});
+
+test("agent_query defaults to async and returns a job handle", async () => {
+	const starts: any[] = [];
+	const tool = createMastraAgentQueryTool({
+		start: async (params: any) => {
+			starts.push(params);
+			return fakeAsyncSummary({ jobId: "query-job", agentId: params.agentId, threadId: "thread", resourceId: "resource" });
+		},
+	} as any, {} as any);
+
+	const result = await tool.execute("call", { agentId: "agent", message: "hello" });
+	assert.equal(starts.length, 1);
+	assert.equal(starts[0].includeReasoning, false);
+	assert.equal("maxSteps" in starts[0], false);
+	assert.equal("activeTools" in starts[0], false);
+	assert.equal((result.details as any).jobId, "query-job");
+	assert.match("text" in result.content[0] ? result.content[0].text : "", /Started async Mastra agent job: query-job/);
+});
+
+test("agent_query async path passes supported options through", async () => {
+	const starts: any[] = [];
+	const tool = createMastraAgentQueryTool({
+		start: async (params: any) => {
+			starts.push(params);
+			return fakeAsyncSummary({ agentId: params.agentId, threadId: params.threadId, resourceId: params.resourceId });
+		},
+	} as any, {} as any);
+
+	await tool.execute("call", {
+		agentId: "agent",
+		message: "hello $1",
+		threadId: "thread-x",
+		resourceId: "resource-x",
+		requestContext: { tenant: "acme" },
+		includeReasoning: true,
+		includeToolResults: true,
+		timeoutMs: 123,
+		input_args: { $1: "world" },
+	});
+
+	assert.equal(starts[0].includeReasoning, true);
+	assert.equal(starts[0].includeToolResults, true);
+	assert.equal(starts[0].threadId, "thread-x");
+	assert.equal(starts[0].resourceId, "resource-x");
+	assert.equal(starts[0].timeoutMs, 123);
+	assert.deepEqual(starts[0].requestContext, { tenant: "acme" });
+	assert.deepEqual(starts[0].input_args, { $1: "world" });
+});
+
+test("agent_query supports synchronous execution and input_args formatting", async () => {
+	const requests: any[] = [];
+	const tool = createMastraAgentQueryTool({
+		start: async () => {
+			throw new Error("async start should not be used for synchronous query");
+		},
+	} as any, {
+		async *streamAgent(agentId: string, request: unknown) {
+			requests.push({ agentId, request });
+			yield { type: "text-delta", text: "answer" };
+			yield { type: "reasoning-delta", text: "hidden" };
+			yield { type: "finish" };
+		},
+	} as any);
+
+	const result = await tool.execute("call", {
+		agentId: "agent",
+		message: "Use $1",
+		synchronous: true,
+		requestContext: { tenant: "acme" },
+		input_args: { $1: "value" },
+	});
+
+	assert.equal((result.details as any).text, "answer");
+	assert.equal("text" in result.content[0] ? result.content[0].text.includes("Reasoning:" ) : true, false);
+	assert.equal(requests[0].agentId, "agent");
+	assert.match(requests[0].request.messages[0].content, /Use \$1\n\nInput arguments:\n- \$1: value/);
+	assert.deepEqual(requests[0].request.requestContext, { tenant: "acme", input_args: { $1: "value" } });
+});
+
+test("agent_query renderers distinguish async summaries and sync details", () => {
+	const tool = createMastraAgentQueryTool({ start: async () => fakeAsyncSummary() } as any, {} as any) as any;
+	const asyncCallLines = tool.renderCall({ agentId: "agent", message: "hello" }, stubTheme).render(80).join("\n");
+	const syncCallLines = tool.renderCall({ agentId: "agent", message: "hello", synchronous: true }, stubTheme).render(80).join("\n");
+	assert.match(asyncCallLines, /mastra query/);
+	assert.match(asyncCallLines, /agent/);
+	assert.match(asyncCallLines, /mode=async/);
+	assert.match(syncCallLines, /mode=sync/);
+
+	const asyncLines = tool
+		.renderResult({ content: [{ type: "text", text: "started" }], details: fakeAsyncSummary() }, {}, stubTheme)
+		.render(80);
+	assert.deepEqual(asyncLines, []);
+
+	const syncLines = tool
+		.renderResult({ content: [{ type: "text", text: "answer" }], details: fakeCallDetails({ text: "answer" }) }, {}, stubTheme)
+		.render(80);
+	assert.ok(syncLines.length > 0);
+	assert.ok(syncLines.join("\n").includes("answer"));
+});
+
 test("async agent manager honors explicit thread ids", async () => {
 	const requests: any[] = [];
 	const manager = new MastraAsyncAgentManager({
@@ -306,6 +440,46 @@ test("agent inspect can include instructions when requested", async () => {
 	assert.equal(result.content[0].type, "text");
 	assert.match("text" in result.content[0] ? result.content[0].text : "", /Use evidence/);
 });
+
+
+const stubTheme: Record<string, (...args: string[]) => string> = {
+	fg: (_color: string, text: string) => text,
+	bold: (text: string) => text,
+	dim: (text: string) => text,
+};
+
+function fakeAsyncSummary(overrides: Record<string, unknown> = {}): any {
+	return {
+		jobId: "job",
+		agentId: "agent",
+		threadId: "thread",
+		resourceId: "resource",
+		status: "running",
+		textPreview: "",
+		toolCalls: 0,
+		toolResults: 0,
+		rawChunkCount: 0,
+		chunksTruncated: false,
+		errors: [],
+		...overrides,
+	};
+}
+
+function fakeCallDetails(overrides: Record<string, unknown> = {}): any {
+	return {
+		agentId: "agent",
+		threadId: "thread",
+		resourceId: "resource",
+		status: "done",
+		text: "answer",
+		toolCalls: [],
+		toolResults: [],
+		chunksTruncated: false,
+		errors: [],
+		rawChunkCount: 1,
+		...overrides,
+	};
+}
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
 	const start = Date.now();

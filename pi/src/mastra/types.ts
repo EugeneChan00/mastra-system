@@ -221,6 +221,19 @@ export interface MastraAgentStartInput extends MastraAgentCallInput {
 	finalMessage?: boolean;
 }
 
+export interface MastraAgentQueryInput {
+	agentId: string;
+	message: string;
+	synchronous?: boolean;
+	threadId?: string;
+	resourceId?: string;
+	requestContext?: Record<string, unknown>;
+	includeToolResults?: boolean;
+	includeReasoning?: boolean;
+	timeoutMs?: number;
+	input_args?: MastraAgentInputArgs;
+}
+
 export interface MastraAgentAsyncStatusInput {
 	jobId?: string;
 }

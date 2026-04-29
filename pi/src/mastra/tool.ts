@@ -13,6 +13,7 @@ import {
 	MASTRA_AGENT_CANCEL_TOOL_NAME,
 	MASTRA_AGENT_INSPECT_TOOL_NAME,
 	MASTRA_AGENT_LIST_TOOL_NAME,
+	MASTRA_AGENT_QUERY_TOOL_NAME,
 	MASTRA_AGENT_READ_TOOL_NAME,
 	MASTRA_AGENT_START_TOOL_NAME,
 	MASTRA_AGENT_STATUS_TOOL_NAME,
@@ -35,6 +36,7 @@ import type {
 	MastraAgentInspectDetails,
 	MastraAgentInspectInput,
 	MastraAgentInspection,
+	MastraAgentQueryInput,
 	MastraAgentReadInput,
 	MastraAgentStartInput,
 	MastraAgentStatusInput,
@@ -75,6 +77,19 @@ export const MASTRA_AGENT_START_PARAMETERS = Type.Object({
 	timeoutMs: Type.Optional(Type.Number({ description: "Stream timeout in milliseconds" })),
 	jobId: Type.Optional(Type.String({ description: "Optional caller-provided async job id" })),
 	finalMessage: Type.Optional(Type.Boolean({ description: "Post a custom final transcript message when the async run completes. Defaults to true." })),
+	input_args: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Optional key-value pairs providing contextual bindings for literal placeholders like $1, $2 in the prompt body. Values are appended to the prompt section and mirrored into requestContext. Keys are sorted numerically." })),
+});
+
+export const MASTRA_AGENT_QUERY_PARAMETERS = Type.Object({
+	agentId: Type.String({ description: "Mastra agent id to query" }),
+	message: Type.String({ description: "User message to send to the Mastra agent" }),
+	synchronous: Type.Optional(Type.Boolean({ description: "Execute synchronously and return final result. Defaults to false (async-by-default). When false, returns a job id immediately and streams progress to the Pi TUI." })),
+	threadId: Type.Optional(Type.String({ description: "Mastra memory thread id" })),
+	resourceId: Type.Optional(Type.String({ description: "Mastra memory resource id" })),
+	requestContext: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Request-scoped context for Mastra" })),
+	includeToolResults: Type.Optional(Type.Boolean({ description: "Include tool result summaries in model-facing text" })),
+	includeReasoning: Type.Optional(Type.Boolean({ description: "Include reasoning deltas in model-facing text. Defaults to false." })),
+	timeoutMs: Type.Optional(Type.Number({ description: "Stream timeout in milliseconds" })),
 	input_args: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Optional key-value pairs providing contextual bindings for literal placeholders like $1, $2 in the prompt body. Values are appended to the prompt section and mirrored into requestContext. Keys are sorted numerically." })),
 });
 
@@ -122,6 +137,7 @@ export const MASTRA_WORKFLOW_STATUS_PARAMETERS = Type.Object({
 	fields: Type.Optional(Type.Array(Type.String(), { description: "Optional workflow run fields to request" })),
 	withNestedWorkflows: Type.Optional(Type.Boolean({ description: "Include nested workflow data in steps" })),
 });
+
 
 const DEFAULT_ASYNC_AGENT_TIMEOUT_MS = 60 * 60_000;
 
@@ -323,6 +339,7 @@ export function createMastraTools(client = new MastraHttpClient(), options: Mast
 			onComplete: options.onAsyncAgentComplete,
 		});
 	return [
+		createMastraAgentQueryTool(asyncAgentManager, client, options.agentActivitySink),
 		createMastraAgentTool(client, options.agentActivitySink),
 		createMastraAgentStartTool(asyncAgentManager),
 		createMastraAgentAsyncStatusTool(asyncAgentManager),
@@ -447,6 +464,127 @@ export function createMastraAgentStartTool(manager: MastraAsyncAgentManager) {
 			return emptyComponent();
 		},
 		renderResult() {
+			return emptyComponent();
+		},
+	};
+}
+
+export function createMastraAgentQueryTool(
+	manager: MastraAsyncAgentManager,
+	client = new MastraHttpClient(),
+	activitySink?: MastraAgentActivitySink,
+) {
+	return {
+		name: MASTRA_AGENT_QUERY_TOOL_NAME,
+		label: "Mastra Agent Query",
+		description: "Call a Mastra agent with async-by-default execution. Returns a job id immediately unless synchronous=true. Supports input_args, includeToolResults, and includeReasoning (default: false). Does not expose maxSteps or activeTools.",
+		promptSnippet: "Query a Mastra agent with async-by-default execution, using a narrower schema than agent_call.",
+		promptGuidelines: [
+			"Use agent_query for Mastra agent delegation when async-by-default behavior is preferred and maxSteps/activeTools are not needed.",
+			"After agent_query returns a jobId (async mode), use agent_read to retrieve output unless the initial prompt explicitly opts out.",
+		],
+		parameters: MASTRA_AGENT_QUERY_PARAMETERS,
+		renderShell: "self" as const,
+		async execute(
+			_toolCallId: string,
+			params: MastraAgentQueryInput,
+			signal?: AbortSignal,
+			onUpdate?: AgentToolUpdateCallback<MastraAgentCallDetails>,
+		): Promise<AgentToolResult<MastraAgentCallDetails | Record<string, unknown>>> {
+			// Default to async unless synchronous is explicitly true
+			if (params.synchronous !== true) {
+				if (signal?.aborted) {
+					return {
+						content: [{ type: "text", text: "Async Mastra agent query was aborted before launch." }],
+						details: {
+							jobId: "",
+							agentId: params.agentId,
+							modeId: undefined,
+							threadId: params.threadId ?? defaultThreadId(params.agentId),
+							resourceId: params.resourceId ?? defaultResourceId(),
+							status: "aborted",
+							prompt: params.message,
+							textPreview: "",
+							toolCalls: 0,
+							toolResults: 0,
+							rawChunkCount: 0,
+							chunksTruncated: false,
+							errors: ["aborted before launch"],
+						} as unknown as Record<string, unknown>,
+					};
+				}
+				try {
+					const summary = await manager.start({
+						agentId: params.agentId,
+						message: params.message,
+						threadId: params.threadId,
+						resourceId: params.resourceId,
+						requestContext: params.requestContext,
+						includeToolResults: params.includeToolResults,
+						includeReasoning: params.includeReasoning ?? false,
+						timeoutMs: params.timeoutMs,
+						input_args: params.input_args,
+					});
+					return {
+						content: [{ type: "text", text: formatAsyncStartResult(summary) }],
+						details: summary as unknown as Record<string, unknown>,
+					};
+				} catch (error) {
+					return errorResult(error, { jobId: "", agentId: params.agentId, status: "error" });
+				}
+			}
+
+			// Synchronous path: stream via client.streamAgent (same pattern as agent_call)
+			const details = createInitialDetails({
+				agentId: params.agentId,
+				message: params.message,
+				threadId: params.threadId,
+				resourceId: params.resourceId,
+				requestContext: params.requestContext,
+				includeToolResults: params.includeToolResults,
+				includeReasoning: params.includeReasoning,
+				timeoutMs: params.timeoutMs,
+				input_args: params.input_args,
+			});
+			const request = createStreamRequest(params, details.threadId, details.resourceId);
+			const emitUpdate = () => {
+				details.updatedAt = Date.now();
+				activitySink?.update(_toolCallId, details);
+				onUpdate?.(makeToolResult(details, params));
+			};
+
+			activitySink?.start(_toolCallId, params, details);
+			emitUpdate();
+
+			try {
+				for await (const chunk of client.streamAgent(params.agentId, request, { signal, timeoutMs: params.timeoutMs })) {
+					applyNormalizedEvent(details, normalizeMastraChunk(chunk));
+					emitUpdate();
+				}
+
+				if (details.status === "running") details.status = "done";
+				details.updatedAt = Date.now();
+				details.completedAt = details.completedAt ?? details.updatedAt;
+				activitySink?.finish(_toolCallId, details);
+				return makeToolResult(details, params);
+			} catch (error) {
+				details.status = signal?.aborted ? "aborted" : "error";
+				details.updatedAt = Date.now();
+				details.completedAt = details.updatedAt;
+				details.errors.push(error instanceof Error ? error.message : String(error));
+				activitySink?.finish(_toolCallId, details);
+				return makeToolResult(details, params);
+			}
+		},
+		renderCall(args: MastraAgentQueryInput, theme: any) {
+			const mode = args.synchronous ? "sync" : "async";
+			return new Text(`${theme.fg("toolTitle", theme.bold("mastra query "))}${theme.fg("accent", args.agentId)}${theme.fg("dim", ` mode=${mode}`)}`, 0, 0);
+		},
+		renderResult(result: AgentToolResult<MastraAgentCallDetails | Record<string, unknown>>, options: { expanded?: boolean; isPartial?: boolean }, theme: any) {
+			// If result has text/toolCalls it's a sync call details; otherwise async summary
+			if (result.details && "text" in (result.details as any) && "toolCalls" in (result.details as any)) {
+				return new MastraAgentCard(result.details as MastraAgentCallDetails, options, theme);
+			}
 			return emptyComponent();
 		},
 	};

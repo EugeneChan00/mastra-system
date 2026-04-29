@@ -11,6 +11,7 @@ export const MASTRA_AGENT_RESULT_MESSAGE_TYPE = "mastra-agent-result";
 export const MASTRA_AGENT_INSPECT_TOOL_NAME = "agent_inspect";
 export const MASTRA_AGENT_LIST_TOOL_NAME = "agent_list";
 export const MASTRA_AGENT_STATUS_TOOL_NAME = "agent_status";
+export const MASTRA_AGENT_QUERY_TOOL_NAME = "agent_query";
 export const MASTRA_WORKFLOW_CALL_TOOL_NAME = "workflow_call";
 export const MASTRA_WORKFLOW_LIST_TOOL_NAME = "workflow_list";
 export const MASTRA_WORKFLOW_STATUS_TOOL_NAME = "workflow_status";
