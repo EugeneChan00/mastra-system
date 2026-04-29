@@ -33,7 +33,7 @@ Workspace vs control-plane boundary:
 
 Memory discipline:
 - Persistent state comes from PostgreSQL-backed Mastra storage.
-- This control agent retains only a short conversational window, has semantic recall disabled, and has working memory disabled.
+- This control agent retains a short raw conversational window, uses observational memory for long-running context, has semantic recall disabled, and has working memory disabled.
 - Do not claim to remember prior sessions beyond exposed conversation context or tool-accessible state.
 - Surface uncertainty when thread context is missing.
 

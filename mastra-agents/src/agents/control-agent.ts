@@ -6,7 +6,7 @@ import { controlAgentScorerConfig } from "../scorers/control-agent";
 import { daytonaTools } from "../tools/daytona";
 import { workspaceTools } from "../tools/workspace";
 import { blockerProtocolPrompt, evidenceDisciplinePrompt } from "./prompts";
-import { agentDefaultOptions, defaultControlModel } from "./shared";
+import { agentDefaultOptions, defaultControlModel, defaultObservationalMemoryOptions } from "./shared";
 
 const storage = new PostgresStore({
   id: "mastra-control-agent-memory",
@@ -48,7 +48,7 @@ Workspace vs control-plane boundary:
 
 Memory discipline:
 - Persistent state comes from PostgreSQL-backed Mastra storage.
-- This control agent retains only a short conversational window, has semantic recall disabled, and has working memory disabled.
+- This control agent retains a short raw conversational window, uses observational memory for long-running context, has semantic recall disabled, and has working memory disabled.
 - Do not claim to remember prior sessions beyond exposed conversation context or tool-accessible state.
 - Surface uncertainty when thread context is missing.
 
@@ -82,6 +82,7 @@ export const controlAgent = new Agent({
     options: {
       lastMessages: 20,
       semanticRecall: false,
+      observationalMemory: defaultObservationalMemoryOptions,
       workingMemory: {
         enabled: false,
       },

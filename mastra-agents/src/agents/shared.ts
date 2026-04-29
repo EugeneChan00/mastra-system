@@ -19,6 +19,13 @@ export const defaultControlModel =
 
 const defaultToolCallConcurrency = 15;
 
+export const defaultObservationalMemoryModel =
+  process.env.MASTRA_OBSERVATIONAL_MEMORY_MODEL ?? defaultAgentModel;
+
+export const defaultObservationalMemoryOptions = {
+  model: defaultObservationalMemoryModel,
+} as const;
+
 const storage = new PostgresStore({
   id: "mastra-agent-memory",
   connectionString:
@@ -33,6 +40,7 @@ export function createAgentMemory() {
     options: {
       lastMessages: 40,
       semanticRecall: false,
+      observationalMemory: defaultObservationalMemoryOptions,
       workingMemory: {
         enabled: true,
         scope: "resource",
