@@ -14,5 +14,8 @@
   },
   "dependencies": {
     "json": "*"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.5"
   }
 }

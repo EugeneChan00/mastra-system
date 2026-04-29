@@ -108,6 +108,7 @@ export const mastra = new Mastra({
               "GH_TOKEN",
               "GITHUB_TOKEN",
               "GITHUB_PERSONAL_ACCESS_TOKEN",
+              "EXA_API_KEY",
               "DAYTONA_API_KEY",
               "DAYTONA_PROXY_API_KEY",
               "DAYTONA_SSH_GATEWAY_API_KEY",
