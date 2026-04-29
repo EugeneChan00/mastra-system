@@ -20,6 +20,10 @@ Supporting tools:
 | `agent_cancel` | Cancel a background job. |
 | `agent_list` / `agent_status` / `agent_inspect` | Discover and inspect registered Mastra agents. |
 
+## Async output handoff
+
+After an `agent_start` job completes, the parent agent should call `agent_read` for that job before finalizing so it can incorporate the async agent output. The only exception is when the user's initial prompt explicitly opted out with wording such as `pass the output` or `don't read the output`.
+
 ## Default memory identifiers
 
 When the caller does not pass explicit memory IDs, Pi derives them deterministically from the current process context:

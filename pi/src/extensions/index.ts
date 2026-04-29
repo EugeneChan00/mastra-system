@@ -219,12 +219,17 @@ function formatWorkflowRun(run: MastraWorkflowRun): string {
 }
 
 function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary): string {
-	const header = [`jobId: ${summary.jobId}`, `status: ${summary.status}`];
-	if (summary.elapsedMs !== undefined) header.push(`elapsed: ${formatDuration(summary.elapsedMs)}`);
-	if (summary.toolCalls + summary.toolResults > 0) header.push(`tools: ${summary.toolCalls + summary.toolResults}`);
-	const body = summary.textPreview || (summary.errors.length > 0 ? summary.errors.join("\n") : "(no text output)");
-	const artifact = summary.artifactPath ? `\n\nFull output artifact: ${summary.artifactPath}` : "";
-	return `${header.join(" · ")}\n\n${body}${artifact}`;
+	const lines = [
+		`Async Mastra agent job completed: ${summary.jobId}`,
+		`agentId: ${summary.agentId}`,
+		`status: ${summary.status}`,
+		summary.elapsedMs !== undefined ? `elapsed: ${formatDuration(summary.elapsedMs)}` : undefined,
+		summary.toolCalls + summary.toolResults > 0 ? `tools: ${summary.toolCalls + summary.toolResults}` : undefined,
+		summary.artifactPath ? `artifactPath: ${summary.artifactPath}` : undefined,
+		`Use agent_read with jobId=${summary.jobId} before finalizing unless the initial user prompt explicitly said "pass the output" or "don't read the output".`,
+		summary.errors.length > 0 ? `errors: ${summary.errors.join("; ")}` : undefined,
+	];
+	return lines.filter(Boolean).join("\n");
 }
 
 function formatDuration(ms: number): string {

@@ -397,11 +397,12 @@ export function createMastraAgentStartTool(manager: MastraAsyncAgentManager) {
 	return {
 		name: MASTRA_AGENT_START_TOOL_NAME,
 		label: "Mastra Agent Start",
-		description: "Start a Mastra agent call asynchronously. Returns a job id immediately while live output streams to the Pi TUI widget.",
-		promptSnippet: "Start a Mastra agent in the background and stream progress to the Pi TUI.",
+		description: "Start a Mastra agent call asynchronously. Returns a job id immediately while live output streams to the Pi TUI widget; after completion, read the job output by default unless the initial user prompt explicitly opted out.",
+		promptSnippet: "Start a Mastra agent in the background, stream progress to the Pi TUI, and read completed output by default.",
 		promptGuidelines: [
 			"Use agent_start for long-running Mastra agent delegation when live TUI progress is useful and the final answer can be fetched later.",
-			"After agent_start returns a jobId, use agent_read or agent_async_status to inspect the result instead of rerunning the agent.",
+			"After agent_start returns a jobId, use agent_async_status to check progress and agent_read to retrieve output without rerunning the agent.",
+			"When an async job completes, call agent_read before finalizing so you can incorporate the output, unless the user's initial prompt explicitly opted out with wording like \"pass the output\" or \"don't read the output\".",
 		],
 		parameters: MASTRA_AGENT_START_PARAMETERS,
 		// The async starter returns a model-visible receipt, but live progress is
@@ -1020,7 +1021,7 @@ function formatAsyncStartResult(summary: MastraAgentAsyncJobSummary): string {
 		`resourceId: ${summary.resourceId}`,
 		summary.artifactPath ? `artifactPath: ${summary.artifactPath}` : undefined,
 		"Live progress is shown in the Mastra Agents widget above the editor.",
-		`Use agent_read with jobId=${summary.jobId} to fetch output later.`,
+		`When complete, use agent_read with jobId=${summary.jobId} before finalizing unless the initial user prompt explicitly said "pass the output" or "don't read the output".`,
 	]
 		.filter(Boolean)
 		.join("\n");
