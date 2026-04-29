@@ -31,6 +31,41 @@ test("uses Mastra memory payload shape", () => {
 	assert.deepEqual(request.messages, [{ role: "user", content: "hello" }]);
 });
 
+test("async agent manager uses unique default threads for concurrent jobs", async () => {
+	const requests: any[] = [];
+	const manager = new MastraAsyncAgentManager({
+		async *streamAgent(_agentId: string, request: unknown) {
+			requests.push(request);
+			yield { type: "finish" };
+		},
+	} as any);
+
+	await manager.start({ agentId: "agent", message: "first", jobId: "job-one", finalMessage: false });
+	await manager.start({ agentId: "agent", message: "second", jobId: "job-two", finalMessage: false });
+
+	await waitFor(() => requests.length === 2);
+	assert.notEqual(requests[0].memory.thread, requests[1].memory.thread);
+	assert.match(requests[0].memory.thread, /:job-one$/);
+	assert.match(requests[1].memory.thread, /:job-two$/);
+});
+
+test("async agent manager honors explicit thread ids", async () => {
+	const requests: any[] = [];
+	const manager = new MastraAsyncAgentManager({
+		async *streamAgent(_agentId: string, request: unknown) {
+			requests.push(request);
+			yield { type: "finish" };
+		},
+	} as any);
+
+	await manager.start({ agentId: "agent", message: "first", jobId: "job-one", threadId: "shared-thread", finalMessage: false });
+	await manager.start({ agentId: "agent", message: "second", jobId: "job-two", threadId: "shared-thread", finalMessage: false });
+
+	await waitFor(() => requests.length === 2);
+	assert.equal(requests[0].memory.thread, "shared-thread");
+	assert.equal(requests[1].memory.thread, "shared-thread");
+});
+
 test("async agent manager starts immediately and captures streamed output", async () => {
 	let updates = 0;
 	let completed = false;
