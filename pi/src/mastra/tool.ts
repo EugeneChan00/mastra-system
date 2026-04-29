@@ -793,18 +793,18 @@ export function createStreamRequest(params: MastraAgentCallInput, threadId: stri
 			return numA - numB;
 		});
 
-		// Build the "Input arguments:" section with numeric ordering
+		// Build the "Input arguments:" section with numeric ordering and bullet list format
 		const argsLines: string[] = [];
 		for (const key of sortedKeys) {
 			const value = params.input_args[key];
 			if (value !== undefined) {
-				argsLines.push(`  ${key}: ${value}`);
+				argsLines.push(`- ${key}: ${value}`);
 			}
 		}
 
 		// Append input_args section only when args are provided; preserve literal placeholders in original message
 		if (argsLines.length > 0) {
-			const inputArgsSection = `Input arguments:\n${argsLines.join("\n")}`;
+			const inputArgsSection = `Input arguments:\n${argsLines.join("\n")}\n\nWhen the prompt references placeholders like $1, $2, etc., use the corresponding input argument above.`;
 			requestContext.input_args = params.input_args;
 
 			return {

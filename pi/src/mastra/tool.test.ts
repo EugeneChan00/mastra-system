@@ -17,10 +17,10 @@ test("input_args preserves literal placeholders in message and appends Input arg
 		"thread",
 		"resource",
 	);
-	// Literal placeholders preserved in message body; Input arguments section appended with instruction
+	// Literal placeholders preserved in message body; Input arguments section appended with bullet list and instruction
 	assert.equal(
 		request.messages[0].content,
-		"Hello $1, you selected $2\n\nInput arguments:\n  $1: Alice\n  $2: Option A",
+		"Hello $1, you selected $2\n\nInput arguments:\n- $1: Alice\n- $2: Option A\n\nWhen the prompt references placeholders like $1, $2, etc., use the corresponding input argument above.",
 	);
 });
 
@@ -30,10 +30,10 @@ test("input_args preserves placeholders and sorts keys numerically ($1, $2, $10)
 		"thread",
 		"resource",
 	);
-	// Literal placeholders preserved; Input arguments section sorted numerically ($1, $2, $10 not $1, $10, $2)
+	// Literal placeholders preserved; Input arguments section sorted numerically ($1, $2, $10 not $1, $10, $2) with bullet list and instruction
 	assert.equal(
 		request.messages[0].content,
-		"Process $2 and $1 and $10\n\nInput arguments:\n  $1: first\n  $2: second\n  $10: tenth",
+		"Process $2 and $1 and $10\n\nInput arguments:\n- $1: first\n- $2: second\n- $10: tenth\n\nWhen the prompt references placeholders like $1, $2, etc., use the corresponding input argument above.",
 	);
 });
 
