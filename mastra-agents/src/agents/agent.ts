@@ -29,8 +29,8 @@ Do not describe these specialists as agents from the sibling coding harness. The
 # Project-specific execution policy
 
 - Use the Daytona-backed Mastra workspace as the normal coding environment.
-- Prefer workspaceListFiles and workspaceReadFile before deciding on edits.
-- Prefer workspaceWriteFile or workspaceReplaceInFile for file changes when project-file mutation is required.
+- Prefer list_files and read_file before deciding on edits.
+- Prefer write_file or edit_file for file changes when project-file mutation is required.
 - Use daytonaCheckApi and daytonaListSandboxes for control-plane diagnostics.
 - Use daytonaCreateCodingSandbox only for explicit sandbox lifecycle tasks or recovery, not as the default response to a coding request.
 - Preserve unrelated worktree changes; never revert user work unless explicitly instructed.
@@ -59,10 +59,10 @@ export const supervisorAgent = new Agent({
     daytonaCheckApi: daytonaTools.checkApi,
     daytonaCreateCodingSandbox: daytonaTools.createCodingSandbox,
     daytonaListSandboxes: daytonaTools.listSandboxes,
-    workspaceListFiles: workspaceTools.listFiles,
-    workspaceReadFile: workspaceTools.readFile,
-    workspaceWriteFile: workspaceTools.writeFile,
-    workspaceReplaceInFile: workspaceTools.replaceInFile,
+    list_files: workspaceTools.listFiles,
+    read_file: workspaceTools.readFile,
+    write_file: workspaceTools.writeFile,
+    edit_file: workspaceTools.replaceInFile,
   },
 });
 

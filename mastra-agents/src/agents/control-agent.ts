@@ -93,9 +93,9 @@ export const controlAgent = new Agent({
     daytonaCheckApi: daytonaTools.checkApi,
     daytonaCreateCodingSandbox: daytonaTools.createCodingSandbox,
     daytonaListSandboxes: daytonaTools.listSandboxes,
-    workspaceListFiles: workspaceTools.listFiles,
-    workspaceReadFile: workspaceTools.readFile,
-    workspaceWriteFile: workspaceTools.writeFile,
-    workspaceReplaceInFile: workspaceTools.replaceInFile,
+    list_files: workspaceTools.listFiles,
+    read_file: workspaceTools.readFile,
+    write_file: workspaceTools.writeFile,
+    edit_file: workspaceTools.replaceInFile,
   },
 });

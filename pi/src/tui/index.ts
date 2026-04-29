@@ -9,6 +9,18 @@ const EXPANDED_CARD_BODY_LINES = 60;
 const DEFAULT_ACTIVITY_LINGER_MS = 12_000;
 const ERROR_ACTIVITY_LINGER_MS = 30_000;
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const TOOL_NAME_ALIASES: Record<string, string> = {
+	mastra_workspace_list_files: "list_files",
+	mastra_workspace_read_file: "read_file",
+	mastra_workspace_write_file: "write_file",
+	mastra_workspace_edit_file: "edit_file",
+	mastra_workspace_grep: "grep",
+	mastra_workspace_execute_command: "bash",
+	workspaceListFiles: "list_files",
+	workspaceReadFile: "read_file",
+	workspaceWriteFile: "write_file",
+	workspaceReplaceInFile: "edit_file",
+};
 
 export interface MastraAgentActivity {
 	toolCallId: string;
@@ -337,9 +349,10 @@ function recentToolEvents(details: MastraAgentCallDetails, limit: number): Mastr
 
 function formatToolEvent(event: MastraToolEvent, theme: Theme, previewWidth: number): string {
 	const icon = toolEventIcon(event, theme);
-	const name = theme.fg("accent", event.name ?? event.id ?? "tool");
-	const detail = toolEventDetail(event);
-	const preview = detail === undefined ? "" : ` ${theme.fg("dim", previewValue(detail, previewWidth))}`;
+	const rawName = event.name ?? event.id ?? "tool";
+	const name = theme.fg("accent", displayToolName(rawName));
+	const detail = event.type === "result" ? formatToolResultSummary(rawName, event.args, event.result, previewWidth) : formatToolArgs(rawName, event.args, previewWidth);
+	const preview = detail ? ` ${theme.fg("dim", detail)}` : "";
 	return `${icon} ${name}${preview}`;
 }
 
@@ -354,26 +367,166 @@ function compactToolEvents(events: MastraToolEvent[]): MastraToolEvent[] {
 
 function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: number, expanded: boolean): string[] {
 	const icon = toolEventIcon(event, theme);
-	const name = theme.fg("accent", event.name ?? event.id ?? "tool");
+	const rawName = event.name ?? event.id ?? "tool";
+	const name = theme.fg("accent", displayToolName(rawName));
 	const prefix = `${icon} ${name}`;
-	const detail = toolEventDetail(event);
-	if (detail === undefined) return [truncateToWidth(prefix, width)];
+	const detail = event.type === "result"
+		? formatToolResultSummary(rawName, event.args, event.result, width)
+		: formatToolArgs(rawName, event.args, width);
+	if (!detail) return [truncateToWidth(prefix, width)];
 
-	if (!expanded) {
-		const remaining = Math.max(20, width - visibleWidth(prefix) - 1);
-		return wrapTextWithAnsi(`${prefix} ${theme.fg("dim", previewValue(detail, remaining))}`, width);
+	if (!expanded || event.type !== "result") {
+		return wrapTextWithAnsi(`${prefix} ${theme.fg("dim", detail)}`, width);
 	}
 
-	const pretty = prettyValue(detail, 2_000);
-	if (!pretty.includes("\n")) {
-		return wrapTextWithAnsi(`${prefix} ${theme.fg("dim", pretty)}`, width);
-	}
-
-	const lines = [truncateToWidth(prefix, width)];
-	for (const line of pretty.split("\n").slice(0, 24)) {
-		lines.push(truncateToWidth(theme.fg("dim", `  ${line}`), width));
+	const lines = wrapTextWithAnsi(`${prefix} ${theme.fg("dim", detail)}`, width);
+	const output = toolResultText(event.result);
+	if (!output || isShortSummary(detail, output)) return lines;
+	for (const line of output.split("\n").slice(0, 10)) {
+		lines.push(truncateToWidth(theme.fg("dim", `  ⎿ ${line}`), width));
 	}
 	return lines;
+}
+
+function displayToolName(name: string): string {
+	return TOOL_NAME_ALIASES[name] ?? name;
+}
+
+function formatToolArgs(rawName: string, args: unknown, maxChars: number): string {
+	const name = displayToolName(rawName);
+	const input = parseToolObject(args);
+	if (!input) return typeof args === "string" ? previewValue(args, maxChars) : "";
+
+	const value = (...keys: string[]) => firstDefined(input, keys);
+	const pathValue = value("path", "filePath", "directory");
+
+	switch (name) {
+		case "list_files":
+			return compactParts([
+				pathValue === undefined ? undefined : `path=${formatScalar(pathValue)}`,
+				value("maxDepth") === undefined ? undefined : `depth=${formatScalar(value("maxDepth"))}`,
+				value("pattern") === undefined ? undefined : `pattern=${formatScalar(value("pattern"))}`,
+				value("showHidden") === undefined ? undefined : `hidden=${formatScalar(value("showHidden"))}`,
+				value("dirsOnly") === true ? "dirs_only" : undefined,
+			]);
+		case "read_file":
+			return compactParts([
+				pathValue === undefined ? undefined : `path=${formatScalar(pathValue)}`,
+				value("offset") === undefined ? undefined : `offset=${formatScalar(value("offset"))}`,
+				value("limit") === undefined ? undefined : `limit=${formatScalar(value("limit"))}`,
+			]);
+		case "write_file":
+			return compactParts([
+				pathValue === undefined ? undefined : `path=${formatScalar(pathValue)}`,
+				input.content === undefined ? undefined : `${countLines(String(input.content))} lines`,
+				value("overwrite") === true ? "overwrite" : undefined,
+			]);
+		case "edit_file":
+			return compactParts([
+				pathValue === undefined ? undefined : `path=${formatScalar(pathValue)}`,
+				input.oldText === undefined ? undefined : `old=${String(input.oldText).length} chars`,
+				input.newText === undefined ? undefined : `new=${String(input.newText).length} chars`,
+				value("replaceAll") === true ? "replace_all" : undefined,
+			]);
+		case "grep":
+			return compactParts([
+				value("pattern", "query") === undefined ? undefined : `pattern=${formatScalar(value("pattern", "query"))}`,
+				pathValue === undefined ? undefined : `path=${formatScalar(pathValue)}`,
+			]);
+		case "bash":
+			return value("command") === undefined ? compactKeyValues(input, maxChars) : previewValue(String(value("command")), maxChars);
+		default:
+			return compactKeyValues(input, maxChars);
+	}
+}
+
+function formatToolResultSummary(rawName: string, args: unknown, result: unknown, maxChars: number): string {
+	const name = displayToolName(rawName);
+	const input = parseToolObject(args);
+	const output = toolResultText(result);
+	const pathValue = input ? firstDefined(input, ["path", "filePath", "directory"]) : undefined;
+
+	switch (name) {
+		case "list_files": {
+			const counts = output.match(/(\d+) director(?:y|ies), (\d+) files?/i);
+			return counts ? `${counts[1]} dirs, ${counts[2]} files` : previewValue(output, maxChars);
+		}
+		case "read_file":
+			return compactParts([
+				pathValue === undefined ? undefined : `path=${formatScalar(pathValue)}`,
+				`${countLines(output)} lines`,
+				`${output.length} chars`,
+			]);
+		case "write_file":
+			return previewValue(output || "written", maxChars);
+		case "edit_file":
+			return previewValue(output || "edited", maxChars);
+		case "grep":
+			return previewValue(output || "no matches", maxChars);
+		case "bash":
+			return previewValue(output || "done", maxChars);
+		default:
+			return previewValue(output, maxChars);
+	}
+}
+
+function parseToolObject(value: unknown): Record<string, unknown> | undefined {
+	if (isPlainRecord(value)) return value;
+	if (typeof value !== "string") return undefined;
+	try {
+		const parsed = JSON.parse(value);
+		return isPlainRecord(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function toolResultText(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (isPlainRecord(value)) {
+		if (typeof value.value === "string") return value.value;
+		if (typeof value.output === "string") return value.output;
+		if (isPlainRecord(value.output) && typeof value.output.value === "string") return value.output.value;
+		if (typeof value.content === "string") return value.content;
+	}
+	return prettyValue(value, 2_000);
+}
+
+function isShortSummary(summary: string, output: string): boolean {
+	return output.length < 120 && summary.includes(output.trim());
+}
+
+function compactKeyValues(record: Record<string, unknown>, maxChars: number): string {
+	return previewValue(compactParts(Object.entries(record).map(([key, value]) => `${key}=${formatScalar(value)}`)), maxChars);
+}
+
+function compactParts(parts: Array<string | undefined | false>): string {
+	return parts.filter((part): part is string => Boolean(part)).join("  ");
+}
+
+function formatScalar(value: unknown): string {
+	if (typeof value === "string") {
+		const normalized = value.replace(/\s+/g, " ").trim();
+		return /[\s]/.test(normalized) ? JSON.stringify(normalized.length > 60 ? `${normalized.slice(0, 59)}…` : normalized) : normalized;
+	}
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	if (value === null) return "null";
+	return previewValue(value, 60);
+}
+
+function firstDefined(record: Record<string, unknown>, keys: string[]): unknown {
+	for (const key of keys) {
+		if (record[key] !== undefined) return record[key];
+	}
+	return undefined;
+}
+
+function countLines(text: string): number {
+	return text.length === 0 ? 0 : text.split("\n").length;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function toolEventIcon(event: MastraToolEvent, theme: Theme): string {

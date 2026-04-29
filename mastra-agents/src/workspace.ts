@@ -1,4 +1,4 @@
-import { LocalFilesystem, Workspace } from "@mastra/core/workspace";
+import { LocalFilesystem, Workspace, WORKSPACE_TOOLS } from "@mastra/core/workspace";
 import path from "node:path";
 
 import { DaytonaAgentsDaytonaSandbox } from "./daytona/mastra-sandbox";
@@ -79,6 +79,15 @@ export const workspace = new Workspace({
   id: "daytona-agents",
   name: "Daytona Agents Daytona Workspace",
   sandbox: codingSandbox,
+  tools: {
+    enabled: false,
+    [WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES]: { enabled: true, name: "list_files" },
+    [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: { enabled: true, name: "read_file" },
+    [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: { enabled: true, name: "write_file" },
+    [WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE]: { enabled: true, name: "edit_file" },
+    [WORKSPACE_TOOLS.FILESYSTEM.GREP]: { enabled: true, name: "grep" },
+    [WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND]: { enabled: true, name: "bash" },
+  },
   mounts: {
     "/daytona-agents": new LocalFilesystem({
       basePath: workspaceRoot,
