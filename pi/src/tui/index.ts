@@ -52,7 +52,7 @@ export interface MastraAgentActivity {
 	 *
 	 * The summary fields above keep status/footer rendering cheap, while this
 	 * snapshot carries the text/tool arrays needed to reuse the same rich card
-	 * renderer used by synchronous `mastra_agent_call` results.
+	 * renderer used by synchronous `agent_call` results.
 	 */
 	details: MastraAgentCallDetails;
 }

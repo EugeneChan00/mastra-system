@@ -8,17 +8,17 @@ Pi exposes two primary Mastra agent call tools:
 
 | Tool | Use | Continuity behavior |
 |---|---|---|
-| `mastra_agent_call` | Synchronous call when the caller needs final output before continuing. | Sends a resolved `memory.thread` and `memory.resource` with the request. |
-| `mastra_agent_start` | Asynchronous/background call with live progress in the Pi TUI. | Uses the same default memory identifier resolution as `mastra_agent_call`. |
+| `agent_call` | Synchronous call when the caller needs final output before continuing. | Sends a resolved `memory.thread` and `memory.resource` with the request. |
+| `agent_start` | Asynchronous/background call with live progress in the Pi TUI. | Uses the same default memory identifier resolution as `agent_call`. |
 
 Supporting tools:
 
 | Tool | Use |
 |---|---|
-| `mastra_agent_read` | Read output from a background job. |
-| `mastra_agent_async_status` | Check background job state. |
-| `mastra_agent_cancel` | Cancel a background job. |
-| `mastra_agent_list` / `mastra_agent_status` / `mastra_agent_inspect` | Discover and inspect registered Mastra agents. |
+| `agent_read` | Read output from a background job. |
+| `agent_async_status` | Check background job state. |
+| `agent_cancel` | Cancel a background job. |
+| `agent_list` / `agent_status` / `agent_inspect` | Discover and inspect registered Mastra agents. |
 
 ## Default memory identifiers
 

@@ -342,8 +342,8 @@ export function createMastraAgentTool(client = new MastraHttpClient(), activityS
 		description: "Call a Mastra agent through the HTTP streaming API and return streamed text plus structured run details.",
 		promptSnippet: "Call a Mastra agent by id when specialist Mastra execution is needed.",
 		promptGuidelines: [
-			"Use mastra_agent_call when the user asks to route work through a Mastra agent and you need the final output before continuing.",
-			"Prefer mastra_agent_start for long-running Mastra agent delegation so live progress can stream to the Pi TUI while the parent turn continues.",
+			"Use agent_call when the user asks to route work through a Mastra agent and you need the final output before continuing.",
+			"Prefer agent_start for long-running Mastra agent delegation so live progress can stream to the Pi TUI while the parent turn continues.",
 		],
 		parameters: MASTRA_AGENT_CALL_PARAMETERS,
 		async execute(
@@ -400,8 +400,8 @@ export function createMastraAgentStartTool(manager: MastraAsyncAgentManager) {
 		description: "Start a Mastra agent call asynchronously. Returns a job id immediately while live output streams to the Pi TUI widget.",
 		promptSnippet: "Start a Mastra agent in the background and stream progress to the Pi TUI.",
 		promptGuidelines: [
-			"Use mastra_agent_start for long-running Mastra agent delegation when live TUI progress is useful and the final answer can be fetched later.",
-			"After mastra_agent_start returns a jobId, use mastra_agent_read or mastra_agent_async_status to inspect the result instead of rerunning the agent.",
+			"Use agent_start for long-running Mastra agent delegation when live TUI progress is useful and the final answer can be fetched later.",
+			"After agent_start returns a jobId, use agent_read or agent_async_status to inspect the result instead of rerunning the agent.",
 		],
 		parameters: MASTRA_AGENT_START_PARAMETERS,
 		// The async starter returns a model-visible receipt, but live progress is
@@ -455,7 +455,7 @@ export function createMastraAgentAsyncStatusTool(manager: MastraAsyncAgentManage
 		label: "Mastra Agent Async Status",
 		description: "Fetch status for an async Mastra agent job, or list recent async jobs when jobId is omitted.",
 		promptSnippet: "Check status for a background Mastra agent job.",
-		promptGuidelines: ["Use mastra_agent_async_status to check whether a background Mastra agent job is still running, done, errored, or aborted."],
+		promptGuidelines: ["Use agent_async_status to check whether a background Mastra agent job is still running, done, errored, or aborted."],
 		parameters: MASTRA_AGENT_ASYNC_STATUS_PARAMETERS,
 		async execute(_toolCallId: string, params: MastraAgentAsyncStatusInput): Promise<AgentToolResult<Record<string, unknown>>> {
 			if (params.jobId) {
@@ -483,7 +483,7 @@ export function createMastraAgentReadTool(manager: MastraAsyncAgentManager) {
 		label: "Mastra Agent Read",
 		description: "Read output from an async Mastra agent job by jobId. Supports summary, tail, or bounded full output.",
 		promptSnippet: "Read summary, tail, or output from a background Mastra agent job.",
-		promptGuidelines: ["Use mastra_agent_read with a jobId from mastra_agent_start to retrieve async Mastra agent output without rerunning the job."],
+		promptGuidelines: ["Use agent_read with a jobId from agent_start to retrieve async Mastra agent output without rerunning the job."],
 		parameters: MASTRA_AGENT_READ_PARAMETERS,
 		async execute(_toolCallId: string, params: MastraAgentReadInput): Promise<AgentToolResult<Record<string, unknown>>> {
 			try {
@@ -511,7 +511,7 @@ export function createMastraAgentCancelTool(manager: MastraAsyncAgentManager) {
 		label: "Mastra Agent Cancel",
 		description: "Cancel a running async Mastra agent job by jobId.",
 		promptSnippet: "Cancel a background Mastra agent job.",
-		promptGuidelines: ["Use mastra_agent_cancel when the user asks to stop a background Mastra agent job."],
+		promptGuidelines: ["Use agent_cancel when the user asks to stop a background Mastra agent job."],
 		parameters: MASTRA_AGENT_CANCEL_PARAMETERS,
 		async execute(_toolCallId: string, params: MastraAgentCancelInput): Promise<AgentToolResult<Record<string, unknown>>> {
 			const summary = manager.cancel(params.jobId, params.reason);
@@ -535,7 +535,7 @@ export function createMastraAgentInspectTool(client = new MastraHttpClient()) {
 		description: "Inspect one or more Mastra agents and return instructions, available tools, and modes metadata.",
 		promptSnippet: "Inspect Mastra agent instructions, tool schemas, and modes by agent id.",
 		promptGuidelines: [
-			"Use mastra_agent_inspect when the user asks for Mastra agent instructions, available tools, modes, or deeper agent capabilities.",
+			"Use agent_inspect when the user asks for Mastra agent instructions, available tools, modes, or deeper agent capabilities.",
 		],
 		parameters: MASTRA_AGENT_INSPECT_PARAMETERS,
 		async execute(_toolCallId: string, params: MastraAgentInspectInput, signal?: AbortSignal): Promise<AgentToolResult<MastraAgentInspectDetails>> {
@@ -584,7 +584,7 @@ export function createMastraAgentListTool(client = new MastraHttpClient()) {
 		label: "Mastra Agents",
 		description: "List available Mastra agents through the HTTP API.",
 		promptSnippet: "List available Mastra agents before choosing an agent id.",
-		promptGuidelines: ["Use mastra_agent_list when the user asks what Mastra agents are available or an agent id is unknown."],
+		promptGuidelines: ["Use agent_list when the user asks what Mastra agents are available or an agent id is unknown."],
 		parameters: Type.Object({}),
 		async execute(_toolCallId: string, _params: Record<string, never>, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
 			try {
@@ -615,7 +615,7 @@ export function createMastraAgentStatusTool(client = new MastraHttpClient()) {
 		label: "Mastra Agent Status",
 		description: "Fetch status and metadata for one Mastra agent.",
 		promptSnippet: "Inspect one Mastra agent's metadata and availability.",
-		promptGuidelines: ["Use mastra_agent_status when the user asks whether a Mastra agent exists or needs agent metadata."],
+		promptGuidelines: ["Use agent_status when the user asks whether a Mastra agent exists or needs agent metadata."],
 		parameters: MASTRA_AGENT_STATUS_PARAMETERS,
 		async execute(_toolCallId: string, params: MastraAgentStatusInput, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
 			try {
@@ -644,7 +644,7 @@ export function createMastraWorkflowListTool(client = new MastraHttpClient()) {
 		label: "Mastra Workflows",
 		description: "List available Mastra workflows through the HTTP API.",
 		promptSnippet: "List available Mastra workflows before choosing a workflow id.",
-		promptGuidelines: ["Use mastra_workflow_list when the user asks what Mastra workflows are available or a workflow id is unknown."],
+		promptGuidelines: ["Use workflow_list when the user asks what Mastra workflows are available or a workflow id is unknown."],
 		parameters: Type.Object({}),
 		async execute(_toolCallId: string, _params: Record<string, never>, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
 			try {
@@ -675,7 +675,7 @@ export function createMastraWorkflowCallTool(client = new MastraHttpClient()) {
 		label: "Mastra Workflow",
 		description: "Run a Mastra workflow through the HTTP streaming API and return streamed run details.",
 		promptSnippet: "Run a Mastra workflow by workflow id and run id.",
-		promptGuidelines: ["Use mastra_workflow_call when the user asks to execute a Mastra workflow and provides or accepts a run id."],
+		promptGuidelines: ["Use workflow_call when the user asks to execute a Mastra workflow and provides or accepts a run id."],
 		parameters: MASTRA_WORKFLOW_CALL_PARAMETERS,
 		async execute(
 			_toolCallId: string,
@@ -726,7 +726,7 @@ export function createMastraWorkflowStatusTool(client = new MastraHttpClient()) 
 		label: "Mastra Workflow Status",
 		description: "Fetch status and result metadata for one Mastra workflow run.",
 		promptSnippet: "Check the status of a Mastra workflow run.",
-		promptGuidelines: ["Use mastra_workflow_status when the user asks about a workflow run's status or result."],
+		promptGuidelines: ["Use workflow_status when the user asks about a workflow run's status or result."],
 		parameters: MASTRA_WORKFLOW_STATUS_PARAMETERS,
 		async execute(_toolCallId: string, params: MastraWorkflowStatusInput, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
 			try {
@@ -1020,7 +1020,7 @@ function formatAsyncStartResult(summary: MastraAgentAsyncJobSummary): string {
 		`resourceId: ${summary.resourceId}`,
 		summary.artifactPath ? `artifactPath: ${summary.artifactPath}` : undefined,
 		"Live progress is shown in the Mastra Agents widget above the editor.",
-		`Use mastra_agent_read with jobId=${summary.jobId} to fetch output later.`,
+		`Use agent_read with jobId=${summary.jobId} to fetch output later.`,
 	]
 		.filter(Boolean)
 		.join("\n");
