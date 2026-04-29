@@ -394,6 +394,7 @@ export function createMastraAgentStartTool(manager: MastraAsyncAgentManager) {
 			"After mastra_agent_start returns a jobId, use mastra_agent_read or mastra_agent_async_status to inspect the result instead of rerunning the agent.",
 		],
 		parameters: MASTRA_AGENT_START_PARAMETERS,
+		renderShell: "self" as const,
 		async execute(_toolCallId: string, params: MastraAgentStartInput, signal?: AbortSignal): Promise<AgentToolResult<Record<string, unknown>>> {
 			if (signal?.aborted) {
 				return {
@@ -426,15 +427,11 @@ export function createMastraAgentStartTool(manager: MastraAsyncAgentManager) {
 				return errorResult(error, { jobId: params.jobId ?? "", agentId: params.agentId, status: "error" });
 			}
 		},
-		renderCall(args: MastraAgentStartInput, theme: any) {
-			const mode = args.modeId ? theme.fg("dim", ` mode=${args.modeId}`) : "";
-			return new Text(`${theme.fg("toolTitle", theme.bold("mastra async "))}${theme.fg("accent", args.agentId)}${mode}`, 0, 0);
+		renderCall() {
+			return emptyComponent();
 		},
-		renderResult(result: AgentToolResult<Record<string, unknown>>, _options: { expanded?: boolean; isPartial?: boolean }, theme: any) {
-			const status = String(result.details.status ?? "unknown");
-			const jobId = String(result.details.jobId ?? "");
-			const color = status === "error" || status === "aborted" ? "error" : "success";
-			return new Text(`${theme.fg(color, status)} ${theme.fg("accent", jobId)}\n${textContent(result)}`, 0, 0);
+		renderResult() {
+			return emptyComponent();
 		},
 	};
 }
@@ -1085,6 +1082,13 @@ function tail(value: string, maxChars: number): string {
 
 function textContent(result: AgentToolResult<unknown>): string {
 	return result.content.map((item) => ("text" in item ? item.text : "")).join("\n");
+}
+
+function emptyComponent() {
+	return {
+		render: () => [],
+		invalidate() {},
+	};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

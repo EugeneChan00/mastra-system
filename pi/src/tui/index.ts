@@ -3,7 +3,8 @@ import type { Component, TUI as PiTUI } from "@mariozechner/pi-tui";
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import type { MastraAgentCallDetails, MastraAgentCallInput, MastraToolEvent, MastraUsage } from "../mastra/types.js";
 
-const DEFAULT_WIDGET_MAX_LINES = 10;
+const DEFAULT_WIDGET_MAX_LINES = 28;
+const DEFAULT_WIDGET_MAX_CARDS = 2;
 const COLLAPSED_CARD_BODY_LINES = 18;
 const EXPANDED_CARD_BODY_LINES = 48; // 50 total lines including top/bottom borders.
 const COLLAPSED_PROMPT_LINES = 3;
@@ -119,6 +120,9 @@ export class MastraAgentActivityStore implements MastraAgentActivitySink {
 
 export interface MastraAgentsWidgetOptions {
 	maxLines?: number;
+	maxCards?: number;
+	cardWidth?: number;
+	cardBodyLines?: number;
 }
 
 export class MastraAgentsWidget implements Component {
@@ -142,29 +146,45 @@ export class MastraAgentsWidget implements Component {
 		const activities = this.store.snapshot();
 		if (activities.length === 0) return [];
 
-		const maxLines = Math.max(3, this.options.maxLines ?? DEFAULT_WIDGET_MAX_LINES);
+		const maxLines = Math.max(8, this.options.maxLines ?? DEFAULT_WIDGET_MAX_LINES);
 		const running = activities.filter((activity) => activity.status === "running");
 		const th = this.theme;
 
-		// Show one full MastraAgentCard for the newest running (or newest finished) activity.
-		const primary = running[0] ?? activities[running.length > 0 ? 0 : activities.length - 1];
-		if (primary) {
-			const cardWidth = Math.min(width, 96);
+		const orderedActivities = [...running, ...activities.filter((a) => a.status !== "running")];
+		const maxCards = Math.max(1, Math.floor(this.options.maxCards ?? DEFAULT_WIDGET_MAX_CARDS));
+		const visibleCards = orderedActivities.slice(0, maxCards);
+		if (visibleCards.length > 0) {
+			const extra = Math.max(0, activities.length - visibleCards.length);
+			const gapLines = Math.max(0, visibleCards.length - 1);
+			const overflowLines = extra > 0 ? 1 : 0;
+			const availableForCards = Math.max(5, maxLines - gapLines - overflowLines);
+			const perCardTotalLines = Math.max(5, Math.floor(availableForCards / visibleCards.length));
+			const maxBodyLines = Math.max(3, this.options.cardBodyLines ?? perCardTotalLines - 2);
+			const cardWidth = Math.min(width, Math.max(12, this.options.cardWidth ?? 96));
 			const pad = Math.max(0, width - cardWidth);
-			const cardLines = new MastraAgentCard(primary.details, { isPartial: primary.status === "running", expanded: false }, th).render(cardWidth);
-			if (cardLines.length > 0) {
-				const padded = cardLines.map((line) => " ".repeat(pad) + line);
-				const extra = activities.length - 1;
-				if (extra > 0) {
-					const overflow = th.fg("dim", `└─ +${extra} more`);
-					padded.push(overflow);
-				}
-				return padded.slice(0, maxLines);
+			const leftPad = " ".repeat(pad);
+			const lines: string[] = [];
+
+			for (let i = 0; i < visibleCards.length; i++) {
+				const activity = visibleCards[i];
+				const cardLines = new MastraAgentCard(
+					activity.details,
+					{ isPartial: activity.status === "running", expanded: false, maxBodyLines },
+					th,
+				).render(cardWidth);
+				if (cardLines.length === 0) continue;
+				if (lines.length > 0) lines.push("");
+				lines.push(...cardLines.map((line) => leftPad + line));
+			}
+
+			if (lines.length > 0) {
+				if (extra > 0) lines.push(truncateToWidth(`${leftPad}${th.fg("dim", `└─ +${extra} more`)}`, width));
+				return lines;
 			}
 		}
 
 		// Fallback: compact list.
-		const allActivities = [...running, ...activities.filter((a) => a.status !== "running")];
+		const allActivities = orderedActivities;
 		const lines: string[] = [];
 		const titleIcon = running.length > 0 ? th.fg("accent", "●") : th.fg("success", "✓");
 		const title = `${titleIcon} ${th.bold("Mastra Agents")} ${th.fg("dim", `${running.length} running · ${activities.length} visible`)}`;
@@ -205,6 +225,7 @@ export class MastraAgentsWidget implements Component {
 export interface MastraAgentCardOptions {
 	expanded?: boolean;
 	isPartial?: boolean;
+	maxBodyLines?: number;
 }
 
 export class MastraAgentCard implements Component {
@@ -279,7 +300,7 @@ export class MastraAgentCard implements Component {
 		}
 
 		if (pinnedBodyLines.length > 0 && bodyLines.length > 0) pinnedBodyLines.push("");
-		const bodyLimit = this.options.expanded ? EXPANDED_CARD_BODY_LINES : COLLAPSED_CARD_BODY_LINES;
+		const bodyLimit = this.options.maxBodyLines ?? (this.options.expanded ? EXPANDED_CARD_BODY_LINES : COLLAPSED_CARD_BODY_LINES);
 		const remainingBodyLimit = Math.max(0, bodyLimit - pinnedBodyLines.length);
 		const scrolledBody = remainingBodyLimit > 0 ? [...pinnedBodyLines, ...tailLines(bodyLines, remainingBodyLimit, th)] : tailLines(pinnedBodyLines, bodyLimit, th);
 		for (const bodyLine of scrolledBody) {
