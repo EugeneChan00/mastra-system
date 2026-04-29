@@ -20,7 +20,7 @@ test("input_args preserves literal placeholders in message and appends Input arg
 	// Literal placeholders preserved in message body; Input arguments section appended with instruction
 	assert.equal(
 		request.messages[0].content,
-		"Hello $1, you selected $2\n\nInput arguments:\n- $1: Alice\n- $2: Option A\n\nUse the above arguments when referencing placeholders like $1, $2 in your response.",
+		"Hello $1, you selected $2\n\nInput arguments:\n  $1: Alice\n  $2: Option A",
 	);
 });
 
@@ -33,7 +33,7 @@ test("input_args preserves placeholders and sorts keys numerically ($1, $2, $10)
 	// Literal placeholders preserved; Input arguments section sorted numerically ($1, $2, $10 not $1, $10, $2)
 	assert.equal(
 		request.messages[0].content,
-		"Process $2 and $1 and $10\n\nInput arguments:\n- $1: first\n- $2: second\n- $10: tenth\n\nUse the above arguments when referencing placeholders like $1, $2, $10 in your response.",
+		"Process $2 and $1 and $10\n\nInput arguments:\n  $1: first\n  $2: second\n  $10: tenth",
 	);
 });
 

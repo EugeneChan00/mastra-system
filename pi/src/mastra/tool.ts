@@ -798,13 +798,13 @@ export function createStreamRequest(params: MastraAgentCallInput, threadId: stri
 		for (const key of sortedKeys) {
 			const value = params.input_args[key];
 			if (value !== undefined) {
-				argsLines.push(`- ${key}: ${value}`);
+				argsLines.push(`  ${key}: ${value}`);
 			}
 		}
 
-		// Preserve literal placeholders in message body; append input_args section with instruction
+		// Append input_args section only when args are provided; preserve literal placeholders in original message
 		if (argsLines.length > 0) {
-			const inputArgsSection = `Input arguments:\n${argsLines.join("\n")}\n\nUse the above arguments when referencing placeholders like ${sortedKeys.join(", ")} in your response.`;
+			const inputArgsSection = `Input arguments:\n${argsLines.join("\n")}`;
 			requestContext.input_args = params.input_args;
 
 			return {
@@ -816,9 +816,11 @@ export function createStreamRequest(params: MastraAgentCallInput, threadId: stri
 				input_args: params.input_args,
 			};
 		}
+
+		// Mirror input_args into requestContext even when argsLines is empty
+		requestContext.input_args = params.input_args;
 	}
 
-	// No input_args: return standard request
 	return {
 		messages: [{ role: "user", content: message }],
 		memory: { thread: threadId, resource: resourceId },
