@@ -23,14 +23,20 @@ const DEFAULT_ACTIVITY_LINGER_MS = 12_000;
 const ERROR_ACTIVITY_LINGER_MS = 30_000;
 export interface MastraAgentWidgetColors {
 	prompt?: ThemeColor;
+	/** Deprecated alias for toolQuery. Kept for existing config.yaml files. */
 	tool?: ThemeColor;
+	toolName?: ThemeColor;
+	toolQuery?: ThemeColor;
+	toolOutput?: ThemeColor;
 	reasoning?: ThemeColor;
 }
-// These roles color payload/detail text only. Labels and tool names stay on the
-// normal foreground so the card hierarchy remains stable while streams update.
-export const DEFAULT_MASTRA_AGENT_WIDGET_COLORS: Required<MastraAgentWidgetColors> = {
+// Tool colors are split by role: the tool name, the query/key-value preview,
+// and the expanded result body. Agent response output keeps rich markdown colors.
+export const DEFAULT_MASTRA_AGENT_WIDGET_COLORS: Required<Omit<MastraAgentWidgetColors, "tool">> = {
 	prompt: "syntaxString",
-	tool: "syntaxString",
+	toolName: "text",
+	toolQuery: "syntaxString",
+	toolOutput: "muted",
 	reasoning: "muted",
 };
 const TOOL_NAME_ALIASES: Record<string, string> = {
@@ -849,7 +855,7 @@ function resolveListMaxAgents(options: MastraAgentsWidgetOptions): number {
 	return Math.max(1, positiveInteger(options.listMaxAgents) ?? DEFAULT_WIDGET_LIST_MAX_AGENTS);
 }
 
-function formatActivityToolStream(activity: MastraAgentActivity, theme: Theme, width: number, colors: Required<MastraAgentWidgetColors>): string {
+function formatActivityToolStream(activity: MastraAgentActivity, theme: Theme, width: number, colors: Required<Omit<MastraAgentWidgetColors, "tool">>): string {
 	const events = compactToolEvents(recentToolEvents(activity.details, 3));
 	if (events.length === 0) return activity.lastEvent || "waiting for tool events";
 	const previewWidth = Math.max(24, Math.floor(width / 2));
@@ -1108,10 +1114,13 @@ function formatActivityStatusLabel(activity: MastraAgentActivity): string {
 	return activity.status;
 }
 
-function resolveWidgetColors(colors?: MastraAgentWidgetColors): Required<MastraAgentWidgetColors> {
+function resolveWidgetColors(colors?: MastraAgentWidgetColors): Required<Omit<MastraAgentWidgetColors, "tool">> {
+	const legacyToolColor = colors?.tool;
 	return {
 		prompt: colors?.prompt ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.prompt,
-		tool: colors?.tool ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.tool,
+		toolName: colors?.toolName ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.toolName,
+		toolQuery: colors?.toolQuery ?? legacyToolColor ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.toolQuery,
+		toolOutput: colors?.toolOutput ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.toolOutput,
 		reasoning: colors?.reasoning ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.reasoning,
 	};
 }
@@ -1129,12 +1138,12 @@ function recentToolEvents(details: MastraAgentCallDetails, limit: number): Mastr
 		.slice(-limit);
 }
 
-function formatToolEvent(event: MastraToolEvent, theme: Theme, previewWidth: number, colors: Required<MastraAgentWidgetColors>): string {
+function formatToolEvent(event: MastraToolEvent, theme: Theme, previewWidth: number, colors: Required<Omit<MastraAgentWidgetColors, "tool">>): string {
 	const icon = toolEventIcon(event, theme);
 	const rawName = event.name ?? event.id ?? "tool";
-	const name = theme.fg("text", displayToolName(rawName));
+	const name = theme.fg(colors.toolName, displayToolName(rawName));
 	const detail = event.type === "result" ? formatToolResultSummary(rawName, event.args, event.result, previewWidth) : formatToolArgs(rawName, event.args, previewWidth);
-	const preview = detail ? ` ${theme.fg(colors.tool, detail)}` : "";
+	const preview = detail ? ` ${theme.fg(colors.toolQuery, detail)}` : "";
 	return `${icon} ${name}${preview}`;
 }
 
@@ -1147,10 +1156,10 @@ function compactToolEvents(events: MastraToolEvent[]): MastraToolEvent[] {
 	});
 }
 
-function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: number, expanded: boolean, colors: Required<MastraAgentWidgetColors>): string[] {
+function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: number, expanded: boolean, colors: Required<Omit<MastraAgentWidgetColors, "tool">>): string[] {
 	const icon = toolEventIcon(event, theme);
 	const rawName = event.name ?? event.id ?? "tool";
-	const name = theme.fg("text", displayToolName(rawName));
+	const name = theme.fg(colors.toolName, displayToolName(rawName));
 	const prefix = `${icon} ${name}`;
 	const detail = event.type === "result"
 		? formatToolResultSummary(rawName, event.args, event.result, width)
@@ -1158,13 +1167,13 @@ function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: numbe
 	if (!detail) return [truncateToWidth(prefix, width)];
 
 	if (!expanded || event.type !== "result") {
-		return wrapTextWithAnsi(`${prefix} ${theme.fg(colors.tool, detail)}`, width);
+		return wrapTextWithAnsi(`${prefix} ${theme.fg(colors.toolQuery, detail)}`, width);
 	}
 
-	const lines = wrapTextWithAnsi(`${prefix} ${theme.fg(colors.tool, detail)}`, width);
+	const lines = wrapTextWithAnsi(`${prefix} ${theme.fg(colors.toolQuery, detail)}`, width);
 	const output = toolResultText(event.result);
 	if (!output || isShortSummary(detail, output)) return lines;
-	const renderedOutput = renderMarkdownLines(markdownTail(output, 3_000), Math.max(1, width - 4));
+	const renderedOutput = renderMarkdownLines(markdownTail(output, 3_000), Math.max(1, width - 4), { color: (value) => theme.fg(colors.toolOutput, value) });
 	for (const line of renderedOutput.slice(0, 12)) {
 		lines.push(truncateToWidth(`${theme.fg("dim", "  ⎿ ")}${line}`, width));
 	}

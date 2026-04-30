@@ -25,7 +25,7 @@ test("loadMastraAgentExtensionConfig reads widget and debug values from config.y
 	const cwd = await mkdtemp(join(tmpdir(), "mastra-config-valid-"));
 	await writeFile(
 		join(cwd, "config.yaml"),
-		"mastra-agent-extension:\n  maxCards: 4\n  maxLines: 60\n  listMaxLines: 10\n  listMaxAgents: 5\n  reservedRows: 12\n  colors:\n    prompt: syntaxString\n    tool: syntaxString\n    reasoning: muted\n  defaultViewMode: cards\n  viewModeShortcut: ctrl+]\n  nextAgentShortcut: alt+n\n  previousAgentShortcut: alt+p\n  detailScrollDownShortcut: alt+d\n  detailScrollUpShortcut: alt+u\n  detailStreamOnlyShortcut: alt+t\n  debug: true\n  debugPiRedraw: true\n  debugLogPath: /tmp/mastra-widget.log\n",
+		"mastra-agent-extension:\n  maxCards: 4\n  maxLines: 60\n  listMaxLines: 10\n  listMaxAgents: 5\n  reservedRows: 12\n  colors:\n    prompt: syntaxString\n    toolName: text\n    toolQuery: syntaxString\n    toolOutput: muted\n    reasoning: muted\n  defaultViewMode: cards\n  viewModeShortcut: ctrl+]\n  nextAgentShortcut: alt+n\n  previousAgentShortcut: alt+p\n  detailScrollDownShortcut: alt+d\n  detailScrollUpShortcut: alt+u\n  detailStreamOnlyShortcut: alt+t\n  debug: true\n  debugPiRedraw: true\n  debugLogPath: /tmp/mastra-widget.log\n",
 		"utf8",
 	);
 
@@ -35,7 +35,7 @@ test("loadMastraAgentExtensionConfig reads widget and debug values from config.y
 		maxCards: 4,
 		maxLines: 60,
 		listMaxAgents: 5,
-		colors: { prompt: "syntaxString", tool: "syntaxString", reasoning: "muted" },
+		colors: { prompt: "syntaxString", toolName: "text", toolQuery: "syntaxString", toolOutput: "muted", reasoning: "muted" },
 		listMaxLines: 10,
 		reservedRows: 12,
 		debug: true,
@@ -73,12 +73,26 @@ test("loadMastraAgentExtensionConfig ignores invalid values and keeps valid valu
 
 test("loadMastraAgentExtensionConfig validates configurable widget colors", async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "mastra-config-colors-"));
-	await writeFile(join(cwd, "config.yaml"), "mastra-agent-extension:\n  colors:\n    prompt: syntaxString\n    tool: nope\n    reasoning: muted\n", "utf8");
+	await writeFile(
+		join(cwd, "config.yaml"),
+		"mastra-agent-extension:\n  colors:\n    prompt: syntaxString\n    toolName: text\n    toolQuery: syntaxString\n    toolOutput: nope\n    reasoning: muted\n",
+		"utf8",
+	);
 
 	const result = await loadMastraAgentExtensionConfig(cwd);
 	assert.equal(result.found, true);
-	assert.deepEqual(result.options.colors, { prompt: "syntaxString", tool: "syntaxString", reasoning: "muted" });
-	assert.match(result.warning ?? "", /colors\.tool/);
+	assert.deepEqual(result.options.colors, { prompt: "syntaxString", toolName: "text", toolQuery: "syntaxString", toolOutput: "muted", reasoning: "muted" });
+	assert.match(result.warning ?? "", /colors\.toolOutput/);
+});
+
+test("loadMastraAgentExtensionConfig keeps legacy tool color as query color alias", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "mastra-config-legacy-tool-color-"));
+	await writeFile(join(cwd, "config.yaml"), "mastra-agent-extension:\n  colors:\n    tool: syntaxString\n", "utf8");
+
+	const result = await loadMastraAgentExtensionConfig(cwd);
+	assert.equal(result.found, true);
+	assert.deepEqual(result.options.colors, { prompt: "syntaxString", toolName: "text", toolQuery: "syntaxString", toolOutput: "muted", reasoning: "muted", tool: "syntaxString" });
+	assert.equal(result.warning, undefined);
 });
 
 test("loadMastraAgentExtensionConfig lets debug enable Pi redraw logging by default", async () => {

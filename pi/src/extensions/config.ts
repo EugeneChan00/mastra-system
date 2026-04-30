@@ -189,9 +189,15 @@ function readWidgetColors(value: unknown, name: string, warnings: string[]): Mas
 	const colors: MastraAgentWidgetColors = {};
 	const prompt = readThemeColor(value.prompt, `${name}.prompt`, warnings);
 	const tool = readThemeColor(value.tool, `${name}.tool`, warnings);
+	const toolName = readThemeColor(value.toolName, `${name}.toolName`, warnings);
+	const toolQuery = readThemeColor(value.toolQuery, `${name}.toolQuery`, warnings);
+	const toolOutput = readThemeColor(value.toolOutput, `${name}.toolOutput`, warnings);
 	const reasoning = readThemeColor(value.reasoning, `${name}.reasoning`, warnings);
 	if (prompt !== undefined) colors.prompt = prompt;
 	if (tool !== undefined) colors.tool = tool;
+	if (toolName !== undefined) colors.toolName = toolName;
+	if (toolQuery !== undefined) colors.toolQuery = toolQuery;
+	if (toolOutput !== undefined) colors.toolOutput = toolOutput;
 	if (reasoning !== undefined) colors.reasoning = reasoning;
 	return colors;
 }

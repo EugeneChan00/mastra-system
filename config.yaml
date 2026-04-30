@@ -13,7 +13,9 @@ mastra-agent-extension:
   detailStreamOnlyShortcut: alt+s
   colors:
     prompt: syntaxString
-    tool: syntaxString
+    toolName: text
+    toolQuery: syntaxString
+    toolOutput: muted
     reasoning: muted
   debug: true
   debugPiRedraw: true
