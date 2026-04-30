@@ -5,9 +5,10 @@ import { parse } from "yaml";
 import type { MastraAgentsViewMode, MastraAgentsWidgetOptions } from "../tui/index.js";
 
 export const MASTRA_AGENT_EXTENSION_CONFIG_KEY = "mastra-agent-extension";
-export const DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS: Required<Pick<MastraAgentsWidgetOptions, "maxCards" | "maxLines">> = {
+export const DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS: Required<Pick<MastraAgentsWidgetOptions, "maxCards" | "maxLines" | "listMaxAgents">> = {
 	maxCards: 4,
 	maxLines: 60,
+	listMaxAgents: 5,
 };
 export const DEFAULT_MASTRA_AGENT_VIEW_MODE: MastraAgentsViewMode = "list";
 export const DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS: MastraAgentExtensionShortcuts = {
@@ -92,6 +93,7 @@ function parseMastraAgentExtensionConfig(raw: string, path: string): MastraAgent
 	const maxCards = readPositiveInteger(section.maxCards, "maxCards", warnings);
 	const maxLines = readPositiveInteger(section.maxLines, "maxLines", warnings);
 	const listMaxLines = readPositiveInteger(section.listMaxLines, "listMaxLines", warnings);
+	const listMaxAgents = readPositiveInteger(section.listMaxAgents, "listMaxAgents", warnings);
 	const reservedRows = readNonNegativeInteger(section.reservedRows, "reservedRows", warnings);
 	const debug = readBoolean(section.debug, "debug", warnings);
 	const debugPiRedraw = readBoolean(section.debugPiRedraw, "debugPiRedraw", warnings);
@@ -104,6 +106,7 @@ function parseMastraAgentExtensionConfig(raw: string, path: string): MastraAgent
 		options: {
 			maxCards: maxCards ?? DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.maxCards,
 			maxLines: maxLines ?? DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.maxLines,
+			listMaxAgents: listMaxAgents ?? DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.listMaxAgents,
 			...(listMaxLines !== undefined ? { listMaxLines } : {}),
 			...(reservedRows !== undefined ? { reservedRows } : {}),
 			...(debug !== undefined ? { debug } : {}),

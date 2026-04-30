@@ -33,7 +33,8 @@ The extension reads optional project config from `config.yaml` in the active Pi 
 mastra-agent-extension:
   maxCards: 4
   maxLines: 60
-  listMaxLines: 12
+  listMaxLines: 18
+  listMaxAgents: 5
   reservedRows: 10
   defaultViewMode: list
   viewModeShortcut: ctrl+h
@@ -43,7 +44,7 @@ mastra-agent-extension:
   debugPiRedraw: true
 ```
 
-Defaults are `maxCards: 4`, `maxLines: 60`, `listMaxLines: 12`, `reservedRows: 10`, and `defaultViewMode: list`. List mode renders a compact above-editor job list with three lines per visible agent. `viewModeShortcut` cycles list → card region → detail region. The card/detail region also renders above the editor at a fixed height while jobs are visible, bounded by `maxLines` and the current terminal viewport. `nextAgentShortcut` and `previousAgentShortcut` focus running jobs in detail mode.
+Defaults are `maxCards: 4`, `maxLines: 60`, `listMaxLines: 18`, `listMaxAgents: 5`, `reservedRows: 10`, and `defaultViewMode: list`. List mode renders a compact above-editor job list with three lines per visible agent and a `+N more` marker when more than `listMaxAgents` jobs are working. `viewModeShortcut` cycles list → card region → detail region. The card/detail region also renders above the editor at a fixed height while jobs are visible, bounded by `maxLines` and the current terminal viewport. `nextAgentShortcut` and `previousAgentShortcut` focus running jobs in detail mode.
 
 `debug: true` writes widget metrics to `~/.pi/agent/mastra-widget-debug.log`; `debugPiRedraw: true` also enables Pi's `~/.pi/agent/pi-debug.log` redraw reasons.
 

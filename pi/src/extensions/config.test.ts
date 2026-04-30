@@ -25,13 +25,13 @@ test("loadMastraAgentExtensionConfig reads widget and debug values from config.y
 	const cwd = await mkdtemp(join(tmpdir(), "mastra-config-valid-"));
 	await writeFile(
 		join(cwd, "config.yaml"),
-		"mastra-agent-extension:\n  maxCards: 4\n  maxLines: 60\n  listMaxLines: 10\n  reservedRows: 12\n  defaultViewMode: cards\n  viewModeShortcut: ctrl+h\n  nextAgentShortcut: ctrl+down\n  previousAgentShortcut: ctrl+up\n  debug: true\n  debugPiRedraw: true\n  debugLogPath: /tmp/mastra-widget.log\n",
+		"mastra-agent-extension:\n  maxCards: 4\n  maxLines: 60\n  listMaxLines: 10\n  listMaxAgents: 5\n  reservedRows: 12\n  defaultViewMode: cards\n  viewModeShortcut: ctrl+h\n  nextAgentShortcut: ctrl+down\n  previousAgentShortcut: ctrl+up\n  debug: true\n  debugPiRedraw: true\n  debugLogPath: /tmp/mastra-widget.log\n",
 		"utf8",
 	);
 
 	const result = await loadMastraAgentExtensionConfig(cwd);
 	assert.equal(result.found, true);
-	assert.deepEqual(result.options, { maxCards: 4, maxLines: 60, listMaxLines: 10, reservedRows: 12, debug: true, debugLogPath: "/tmp/mastra-widget.log" });
+	assert.deepEqual(result.options, { maxCards: 4, maxLines: 60, listMaxAgents: 5, listMaxLines: 10, reservedRows: 12, debug: true, debugLogPath: "/tmp/mastra-widget.log" });
 	assert.equal(result.debugPiRedraw, true);
 	assert.equal(result.defaultViewMode, "cards");
 	assert.deepEqual(result.shortcuts, {
@@ -44,13 +44,14 @@ test("loadMastraAgentExtensionConfig reads widget and debug values from config.y
 
 test("loadMastraAgentExtensionConfig ignores invalid values and keeps valid values", async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "mastra-config-invalid-values-"));
-	await writeFile(join(cwd, "config.yaml"), "mastra-agent-extension:\n  maxCards: nope\n  maxLines: 60\n", "utf8");
+	await writeFile(join(cwd, "config.yaml"), "mastra-agent-extension:\n  maxCards: nope\n  maxLines: 60\n  listMaxAgents: nope\n", "utf8");
 
 	const result = await loadMastraAgentExtensionConfig(cwd);
 	assert.equal(result.found, true);
-	assert.deepEqual(result.options, { maxCards: DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.maxCards, maxLines: 60 });
+	assert.deepEqual(result.options, { maxCards: DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.maxCards, maxLines: 60, listMaxAgents: DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.listMaxAgents });
 	assert.equal(result.debugPiRedraw, false);
 	assert.match(result.warning ?? "", /maxCards/);
+	assert.match(result.warning ?? "", /listMaxAgents/);
 });
 
 test("loadMastraAgentExtensionConfig lets debug enable Pi redraw logging by default", async () => {

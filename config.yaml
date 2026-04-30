@@ -1,7 +1,8 @@
 mastra-agent-extension:
   maxCards: 4
   maxLines: 60
-  listMaxLines: 12
+  listMaxLines: 18
+  listMaxAgents: 5
   reservedRows: 10
   defaultViewMode: list
   viewModeShortcut: ctrl+h

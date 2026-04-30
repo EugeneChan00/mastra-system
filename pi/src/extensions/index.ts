@@ -2,9 +2,12 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-cod
 import { Text, type KeyId } from "@mariozechner/pi-tui";
 import { MASTRA_AGENT_RESULT_MESSAGE_TYPE, MASTRA_STATUS_KEY } from "../const.js";
 import { MastraAsyncAgentManager, MastraHttpClient, createMastraTools } from "../mastra/index.js";
-import { MastraAgentActivityStore, MastraAgentsListWidget, MastraAgentsWidget, MastraAgentsWidgetViewController, type MastraAgentsViewMode } from "../tui/index.js";
+import { MastraAgentActivityStore, MastraAgentsWidget, MastraAgentsWidgetViewController, type MastraAgentsViewMode } from "../tui/index.js";
 import type { MastraAgentAsyncJobSummary, MastraAgentInfo, MastraWorkflowInfo, MastraWorkflowRun } from "../mastra/index.js";
 import { loadMastraAgentExtensionConfig, loadMastraAgentExtensionConfigSync, type MastraAgentExtensionShortcuts } from "./config.js";
+
+const MASTRA_AGENT_WIDGET_ID = "mastra-agents";
+const LEGACY_MASTRA_AGENT_WIDGET_IDS = [MASTRA_AGENT_WIDGET_ID, "mastra-agents-list", "mastra-agents-region"] as const;
 
 export default function mastraPiExtension(pi: ExtensionAPI) {
 	const client = new MastraHttpClient();
@@ -31,6 +34,7 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 		},
 	});
 	let unsubscribeActivityStatus: (() => void) | undefined;
+	let unmountMastraWidget: (() => void) | undefined;
 	let statusLabel = "offline";
 
 	registerMastraWidgetShortcuts(pi, startupWidgetConfig.shortcuts, viewController, activityStore);
@@ -99,31 +103,46 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		unsubscribeActivityStatus?.();
+		unmountMastraWidget?.();
+		unmountMastraWidget = undefined;
 		const piSessionId = ctx.sessionManager.getSessionId();
 		asyncAgentManager.configureSession({
 			piSessionId,
 			cwd: ctx.cwd,
 			isCompletionAcknowledged: (jobId) => hasCompletionReminder(ctx.sessionManager.getEntries(), jobId),
 		});
+		let syncMastraWidget = () => undefined;
 		if (ctx.hasUI) {
 			const widgetConfig = await loadMastraAgentExtensionConfig(ctx.cwd);
 			viewController.setMode(widgetConfig.defaultViewMode);
 			if (widgetConfig.warning) ctx.ui.notify(widgetConfig.warning, "warning");
 			if (widgetConfig.debugPiRedraw && process.env.PI_DEBUG_REDRAW === undefined) process.env.PI_DEBUG_REDRAW = "1";
-			ctx.ui.setWidget("mastra-agents", undefined);
-			ctx.ui.setWidget(
-				"mastra-agents-list",
-				(tui, theme) => new MastraAgentsListWidget(tui, theme, activityStore, { ...widgetConfig.options, viewController }),
-				{ placement: "aboveEditor" },
-			);
-			ctx.ui.setWidget(
-				"mastra-agents-region",
-				(tui, theme) => new MastraAgentsWidget(tui, theme, activityStore, { ...widgetConfig.options, fixedRegion: true, viewController }),
-				{ placement: "aboveEditor" },
-			);
+			for (const widgetId of LEGACY_MASTRA_AGENT_WIDGET_IDS) ctx.ui.setWidget(widgetId, undefined);
+			let widgetMounted = false;
+			const mountWidget = () => {
+				if (widgetMounted) return;
+				ctx.ui.setWidget(
+					MASTRA_AGENT_WIDGET_ID,
+					(tui, theme) => new MastraAgentsWidget(tui, theme, activityStore, { ...widgetConfig.options, fixedRegion: true, viewController }),
+					{ placement: "aboveEditor" },
+				);
+				widgetMounted = true;
+			};
+			const unmountWidget = () => {
+				if (!widgetMounted) return;
+				ctx.ui.setWidget(MASTRA_AGENT_WIDGET_ID, undefined);
+				widgetMounted = false;
+			};
+			syncMastraWidget = () => {
+				if (activityStore.hasVisibleActivity()) mountWidget();
+				else unmountWidget();
+			};
+			unmountMastraWidget = unmountWidget;
+			syncMastraWidget();
 		}
 		unsubscribeActivityStatus = activityStore.subscribe(() => {
 			const running = activityStore.snapshot({ includeFinished: false }).length;
+			syncMastraWidget();
 			ctx.ui.setStatus(MASTRA_STATUS_KEY, running > 0 ? `mastra: ${running} running` : `mastra: ${statusLabel}`);
 		});
 
@@ -146,6 +165,8 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		asyncAgentManager.detachAll("Pi session shutdown");
+		unmountMastraWidget?.();
+		unmountMastraWidget = undefined;
 		unsubscribeActivityStatus?.();
 		unsubscribeActivityStatus = undefined;
 	});

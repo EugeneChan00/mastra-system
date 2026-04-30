@@ -8,9 +8,11 @@ import type { MastraAgentCallDetails, MastraAgentCallInput, MastraAgentLifecycle
 
 const DEFAULT_WIDGET_MAX_LINES = 60;
 const DEFAULT_WIDGET_MAX_CARDS = 4;
-const DEFAULT_WIDGET_LIST_MAX_LINES = 12;
+const DEFAULT_WIDGET_LIST_MAX_LINES = 18;
+const DEFAULT_WIDGET_LIST_MAX_AGENTS = 5;
 const DEFAULT_WIDGET_RESERVED_ROWS = 10;
 const MIN_WIDGET_LINES = 1;
+const ABOVE_EDITOR_WIDGET_SPACER_LINES = 1;
 const COLLAPSED_CARD_BODY_LINES = 18;
 const EXPANDED_CARD_BODY_LINES = 48; // 50 total lines including top/bottom borders.
 const COLLAPSED_PROMPT_LINES = 3;
@@ -131,7 +133,7 @@ export class MastraAgentActivityStore implements MastraAgentActivitySink {
 	snapshot(options: { includeFinished?: boolean } = {}): MastraAgentActivity[] {
 		this.cleanupExpired();
 		const includeFinished = options.includeFinished ?? true;
-		const values = Array.from(this.activities.values()).filter((activity) => includeFinished || activity.lifecycleStatus === "working" || activity.lifecycleStatus === "agent_response_queued");
+		const values = Array.from(this.activities.values()).filter((activity) => includeFinished || activity.lifecycleStatus === "working");
 		return values.sort((a, b) => {
 			const aRunning = a.lifecycleStatus === "working" ? 0 : 1;
 			const bRunning = b.lifecycleStatus === "working" ? 0 : 1;
@@ -141,7 +143,7 @@ export class MastraAgentActivityStore implements MastraAgentActivitySink {
 	}
 
 	hasVisibleActivity(): boolean {
-		return this.snapshot().length > 0;
+		return this.snapshot({ includeFinished: false }).length > 0;
 	}
 
 	subscribe(listener: () => void): () => void {
@@ -180,13 +182,15 @@ export interface MastraAgentsWidgetOptions {
 	maxLines?: number;
 	/** Height budget for the compact list widget above the editor. */
 	listMaxLines?: number;
+	/** Maximum live async jobs rendered in compact list mode. */
+	listMaxAgents?: number;
 	/** Number of live/lingering async jobs rendered as full cards. */
 	maxCards?: number;
 	/** Optional fixed body height per card; otherwise derived from maxLines. */
 	cardBodyLines?: number;
 	/** Rows reserved for Pi chat/editor/status/footer chrome when adapting to terminal height. */
 	reservedRows?: number;
-	/** Keep the card/detail region height stable while activities are visible. */
+	/** Deprecated: card/detail fixed sizing is derived from maxLines. */
 	fixedRegion?: boolean;
 	/** Shared view state for list/card/detail mode switching. */
 	viewController?: MastraAgentsWidgetViewController;
@@ -272,12 +276,15 @@ interface MastraWidgetLineBudget {
 	effectiveMaxLines: number;
 	terminalRows?: number;
 	reservedRows: number;
+	spacerRows: number;
 	viewportBudget?: number;
 }
 
 interface MastraWidgetRenderMetrics {
 	renderMode: MastraWidgetRenderMode;
 	totalActivities: number;
+	workingActivities: number;
+	hiddenQueuedActivities: number;
 	visibleCards: number;
 	overflowCards: number;
 }
@@ -285,6 +292,7 @@ interface MastraWidgetRenderMetrics {
 interface MastraWidgetDebugEntry extends MastraWidgetLineBudget, MastraWidgetRenderMetrics {
 	renderReason: MastraWidgetRenderReason;
 	renderedLines: number;
+	occupiedRows: number;
 	clamped: boolean;
 }
 
@@ -307,41 +315,63 @@ export class MastraAgentsWidget implements Component {
 	render(width: number): string[] {
 		if (width < 12) return [];
 		const activities = this.store.snapshot();
-		const lineBudget = resolveWidgetLineBudget(this.options, this.tui.terminal?.rows);
+		const orderedActivities = visibleWidgetActivities(activities);
+		const hiddenQueuedActivities = activities.filter((activity) => activity.lifecycleStatus === "agent_response_queued").length;
 		const viewMode = this.options.viewController?.getMode() ?? "cards";
 		if (viewMode === "list") {
+			const listOptions = { ...this.options, maxLines: this.options.listMaxLines ?? DEFAULT_WIDGET_LIST_MAX_LINES };
+			const lineBudget = resolveWidgetLineBudget(listOptions, this.tui.terminal?.rows);
+			if (orderedActivities.length === 0) {
+				this.visibleToolCallIds = [];
+				return this.finishRender([], lineBudget, {
+					renderMode: "empty",
+					totalActivities: activities.length,
+					workingActivities: 0,
+					hiddenQueuedActivities,
+					visibleCards: 0,
+					overflowCards: 0,
+				});
+			}
+
+			const result = renderCompactActivityList(orderedActivities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options));
+			this.visibleToolCallIds = result.visibleCount > 0 ? orderedActivities.slice(-result.visibleCount).map((activity) => activity.toolCallId) : [];
+			return this.finishRender(result.lines, lineBudget, {
+				renderMode: "list",
+				totalActivities: activities.length,
+				workingActivities: orderedActivities.length,
+				hiddenQueuedActivities,
+				visibleCards: result.visibleCount,
+				overflowCards: result.hiddenCount,
+			});
+		}
+		const lineBudget = resolveWidgetLineBudget(this.options, this.tui.terminal?.rows);
+		if (orderedActivities.length === 0) {
 			this.visibleToolCallIds = [];
 			return this.finishRender([], lineBudget, {
 				renderMode: "empty",
 				totalActivities: activities.length,
-				visibleCards: 0,
-				overflowCards: 0,
-			});
-		}
-		if (activities.length === 0) {
-			this.visibleToolCallIds = [];
-			return this.finishRender([], lineBudget, {
-				renderMode: "empty",
-				totalActivities: 0,
+				workingActivities: 0,
+				hiddenQueuedActivities,
 				visibleCards: 0,
 				overflowCards: 0,
 			});
 		}
 
 		const maxLines = lineBudget.effectiveMaxLines;
-		const th = this.theme;
-
-		const orderedActivities = visibleWidgetActivities(activities);
-		if (orderedActivities.length === 0) {
+		if (maxLines <= 0) {
 			this.visibleToolCallIds = [];
 			return this.finishRender([], lineBudget, {
 				renderMode: "empty",
 				totalActivities: activities.length,
+				workingActivities: orderedActivities.length,
+				hiddenQueuedActivities,
 				visibleCards: 0,
 				overflowCards: 0,
 			});
 		}
-		if (viewMode === "detail") return this.renderDetail(orderedActivities, maxLines, width, lineBudget);
+		const th = this.theme;
+
+		if (viewMode === "detail") return this.renderDetail(orderedActivities, maxLines, width, lineBudget, activities.length, hiddenQueuedActivities);
 
 		const running = orderedActivities.filter((activity) => activity.lifecycleStatus === "working");
 		const maxCards = Math.max(1, Math.floor(this.options.maxCards ?? DEFAULT_WIDGET_MAX_CARDS));
@@ -349,30 +379,37 @@ export class MastraAgentsWidget implements Component {
 		if (visibleCards.length > 0 && maxLines >= 5) {
 			const extra = Math.max(0, orderedActivities.length - visibleCards.length);
 			const gapLines = Math.max(0, visibleCards.length - 1);
-			const overflowLines = extra > 0 ? 1 : 0;
-			const availableForCards = Math.max(5, maxLines - gapLines - overflowLines);
-			const perCardTotalLines = Math.max(5, Math.floor(availableForCards / visibleCards.length));
-			const maxBodyLines = Math.max(3, Math.min(this.options.cardBodyLines ?? perCardTotalLines - 2, perCardTotalLines - 2));
+			const minimumCardLines = visibleCards.length * 5 + gapLines;
+			const showOverflow = extra > 0 && minimumCardLines + 1 <= maxLines;
+			const overflowLines = showOverflow ? 1 : 0;
+			const availableForCards = Math.max(visibleCards.length * 5, maxLines - gapLines - overflowLines);
+			const baseCardTotalLines = Math.max(5, Math.floor(availableForCards / visibleCards.length));
+			const remainderLines = Math.max(0, availableForCards - baseCardTotalLines * visibleCards.length);
 			const lines: string[] = [];
 
-			if (extra > 0) lines.push(truncateToWidth(th.fg("dim", `+${extra} more`), width));
+			if (showOverflow) lines.push(truncateToWidth(th.fg("dim", `+${extra} more`), width));
 
 			for (let i = 0; i < visibleCards.length; i++) {
 				const activity = visibleCards[i];
+				const fixedTotalLines = baseCardTotalLines + (i >= visibleCards.length - remainderLines ? 1 : 0);
+				const bodyLines = Math.max(0, fixedTotalLines - 2);
+				const maxBodyLines = Math.max(0, Math.min(this.options.cardBodyLines ?? bodyLines, bodyLines));
 				const cardLines = new MastraAgentCard(
 					activity.details,
-					{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: false, maxBodyLines },
+					{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: false, fixedTotalLines, maxBodyLines },
 					th,
 				).render(width);
 				if (cardLines.length === 0) continue;
-				if (lines.length > 0 && !(extra > 0 && i === 0)) lines.push("");
+				if (lines.length > 0 && !(showOverflow && i === 0)) lines.push("");
 				lines.push(...cardLines);
 			}
 
 			if (lines.length > 0) {
-				return this.finishRender(this.finishRegion(lines.slice(0, maxLines), maxLines), lineBudget, {
+				return this.finishRender(lines.slice(0, maxLines), lineBudget, {
 					renderMode: "cards",
-					totalActivities: orderedActivities.length,
+					totalActivities: activities.length,
+					workingActivities: orderedActivities.length,
+					hiddenQueuedActivities,
 					visibleCards: visibleCards.length,
 					overflowCards: extra,
 				});
@@ -383,13 +420,13 @@ export class MastraAgentsWidget implements Component {
 		const allActivities = orderedActivities;
 		const lines: string[] = [];
 		const titleIcon = running.length > 0 ? th.fg("accent", "●") : th.fg("success", "✓");
-		const title = `${titleIcon} ${th.bold("Mastra Agents")} ${th.fg("dim", `${running.length} running · ${activities.length} visible`)}`;
+		const title = `${titleIcon} ${th.bold("Mastra Agents")} ${th.fg("dim", `${running.length} running · ${orderedActivities.length} visible`)}`;
 		lines.push(truncateToWidth(title, width));
 
 		const visibleActivities = allActivities.slice(0, Math.max(0, maxLines - 2));
 		for (let i = 0; i < visibleActivities.length; i++) {
 			const activity = visibleActivities[i];
-			const isLast = i === visibleActivities.length - 1 && activities.length <= visibleActivities.length;
+			const isLast = i === visibleActivities.length - 1 && orderedActivities.length <= visibleActivities.length;
 			const branch = isLast ? "└─" : "├─";
 			lines.push(truncateToWidth(`${th.fg("dim", branch)} ${formatActivityHeadline(activity, th)}`, width));
 			const progress = activity.lastEvent || textTail(activity.text, 90);
@@ -405,9 +442,11 @@ export class MastraAgentsWidget implements Component {
 			lines.unshift(truncateToWidth(th.fg("dim", `+${orderedActivities.length - visibleActivities.length} more`), width));
 		}
 
-		return this.finishRender(this.finishRegion(lines.slice(0, maxLines), maxLines), lineBudget, {
+		return this.finishRender(lines.slice(0, maxLines), lineBudget, {
 			renderMode: "compact",
-			totalActivities: orderedActivities.length,
+			totalActivities: activities.length,
+			workingActivities: orderedActivities.length,
+			hiddenQueuedActivities,
 			visibleCards: 0,
 			overflowCards: Math.max(0, orderedActivities.length - visibleActivities.length),
 		});
@@ -437,14 +476,23 @@ export class MastraAgentsWidget implements Component {
 		return visibleCards;
 	}
 
-	private renderDetail(orderedActivities: MastraAgentActivity[], maxLines: number, width: number, lineBudget: MastraWidgetLineBudget): string[] {
+	private renderDetail(
+		orderedActivities: MastraAgentActivity[],
+		maxLines: number,
+		width: number,
+		lineBudget: MastraWidgetLineBudget,
+		totalActivities: number,
+		hiddenQueuedActivities: number,
+	): string[] {
 		const th = this.theme;
 		const activity = this.options.viewController?.getFocusedActivity(orderedActivities) ?? orderedActivities.at(-1);
 		if (!activity) {
 			this.visibleToolCallIds = [];
 			return this.finishRender([], lineBudget, {
 				renderMode: "empty",
-				totalActivities: orderedActivities.length,
+				totalActivities,
+				workingActivities: 0,
+				hiddenQueuedActivities,
 				visibleCards: 0,
 				overflowCards: 0,
 			});
@@ -461,23 +509,31 @@ export class MastraAgentsWidget implements Component {
 			`${activityIcon(activity, th)} ${th.bold("Mastra Agent")} ${th.fg("accent", activity.agentId)} ${th.fg("dim", headerParts.join(" · "))}`,
 			width,
 		);
-		const maxBodyLines = Math.max(1, maxLines - 3);
+		if (maxLines <= 1) {
+			return this.finishRender([header].slice(0, maxLines), lineBudget, {
+				renderMode: "detail",
+				totalActivities,
+				workingActivities: orderedActivities.length,
+				hiddenQueuedActivities,
+				visibleCards: 1,
+				overflowCards: Math.max(0, orderedActivities.length - 1),
+			});
+		}
+		const fixedTotalLines = Math.max(2, maxLines - 1);
+		const maxBodyLines = Math.max(0, fixedTotalLines - 2);
 		const cardLines = new MastraAgentCard(
 			activity.details,
-			{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: true, maxBodyLines },
+			{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: true, fixedTotalLines, maxBodyLines },
 			th,
 		).render(width);
-		return this.finishRender(this.finishRegion([header, ...cardLines].slice(0, maxLines), maxLines), lineBudget, {
+		return this.finishRender([header, ...cardLines].slice(0, maxLines), lineBudget, {
 			renderMode: "detail",
-			totalActivities: orderedActivities.length,
+			totalActivities,
+			workingActivities: orderedActivities.length,
+			hiddenQueuedActivities,
 			visibleCards: 1,
 			overflowCards: Math.max(0, orderedActivities.length - 1),
 		});
-	}
-
-	private finishRegion(lines: string[], maxLines: number): string[] {
-		if (this.options.fixedRegion !== true || lines.length === 0 || lines.length >= maxLines) return lines;
-		return [...lines, ...Array.from({ length: maxLines - lines.length }, () => "")];
 	}
 
 	private requestRender(reason: MastraWidgetRenderReason): void {
@@ -492,7 +548,8 @@ export class MastraAgentsWidget implements Component {
 				...metrics,
 				renderReason: this.renderReason,
 				renderedLines: lines.length,
-				clamped: lineBudget.effectiveMaxLines < lineBudget.configuredMaxLines,
+				occupiedRows: lines.length + lineBudget.spacerRows,
+				clamped: lineBudget.viewportBudget !== undefined && lineBudget.viewportBudget < lineBudget.configuredMaxLines,
 			},
 			this.options,
 		);
@@ -521,20 +578,26 @@ export class MastraAgentsListWidget implements Component {
 		const listOptions = { ...this.options, maxLines: this.options.listMaxLines ?? DEFAULT_WIDGET_LIST_MAX_LINES };
 		const lineBudget = resolveWidgetLineBudget(listOptions, this.tui.terminal?.rows);
 		const viewMode = this.options.viewController?.getMode() ?? "list";
-		const activities = visibleWidgetActivities(this.store.snapshot());
+		const allActivities = this.store.snapshot();
+		const activities = visibleWidgetActivities(allActivities);
+		const hiddenQueuedActivities = allActivities.filter((activity) => activity.lifecycleStatus === "agent_response_queued").length;
 		if (viewMode !== "list" || activities.length === 0) {
 			return this.finishRender([], lineBudget, {
 				renderMode: "empty",
-				totalActivities: activities.length,
+				totalActivities: allActivities.length,
+				workingActivities: activities.length,
+				hiddenQueuedActivities,
 				visibleCards: 0,
 				overflowCards: 0,
 			});
 		}
 
-		const result = renderCompactActivityList(activities, lineBudget.effectiveMaxLines, width, this.theme);
+		const result = renderCompactActivityList(activities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options));
 		return this.finishRender(result.lines, lineBudget, {
 			renderMode: "list",
-			totalActivities: activities.length,
+			totalActivities: allActivities.length,
+			workingActivities: activities.length,
+			hiddenQueuedActivities,
 			visibleCards: result.visibleCount,
 			overflowCards: result.hiddenCount,
 		});
@@ -561,7 +624,8 @@ export class MastraAgentsListWidget implements Component {
 				...metrics,
 				renderReason: this.renderReason,
 				renderedLines: lines.length,
-				clamped: lineBudget.effectiveMaxLines < lineBudget.configuredMaxLines,
+				occupiedRows: lines.length + lineBudget.spacerRows,
+				clamped: lineBudget.viewportBudget !== undefined && lineBudget.viewportBudget < lineBudget.configuredMaxLines,
 			},
 			this.options,
 		);
@@ -574,27 +638,31 @@ function resolveWidgetLineBudget(options: MastraAgentsWidgetOptions, terminalRow
 	const configuredMaxLines = Math.max(MIN_WIDGET_LINES, positiveInteger(options.maxLines) ?? DEFAULT_WIDGET_MAX_LINES);
 	const reservedRows = Math.max(0, nonNegativeInteger(options.reservedRows) ?? DEFAULT_WIDGET_RESERVED_ROWS);
 	const rows = positiveInteger(terminalRows);
+	const contentLinesForTotal = (totalLines: number) => Math.max(0, totalLines - ABOVE_EDITOR_WIDGET_SPACER_LINES);
 	if (rows === undefined) {
 		return {
 			configuredMaxLines,
-			effectiveMaxLines: configuredMaxLines,
+			effectiveMaxLines: contentLinesForTotal(configuredMaxLines),
 			reservedRows,
+			spacerRows: ABOVE_EDITOR_WIDGET_SPACER_LINES,
 		};
 	}
 
 	const viewportBudget = Math.max(MIN_WIDGET_LINES, rows - reservedRows);
+	const totalBudget = Math.min(configuredMaxLines, viewportBudget);
 	return {
 		configuredMaxLines,
-		effectiveMaxLines: Math.min(configuredMaxLines, viewportBudget),
+		effectiveMaxLines: contentLinesForTotal(totalBudget),
 		terminalRows: rows,
 		reservedRows,
+		spacerRows: ABOVE_EDITOR_WIDGET_SPACER_LINES,
 		viewportBudget,
 	};
 }
 
 function visibleWidgetActivities(activities: MastraAgentActivity[]): MastraAgentActivity[] {
 	return activities
-		.filter((activity) => activity.lifecycleStatus === "working" || activity.lifecycleStatus === "agent_response_queued")
+		.filter((activity) => activity.lifecycleStatus === "working")
 		.sort((a, b) => a.order - b.order);
 }
 
@@ -603,26 +671,24 @@ function renderCompactActivityList(
 	maxLines: number,
 	width: number,
 	theme: Theme,
+	maxAgents = DEFAULT_WIDGET_LIST_MAX_AGENTS,
 ): { lines: string[]; visibleCount: number; hiddenCount: number } {
 	const running = activities.filter((activity) => activity.lifecycleStatus === "working");
-	const queued = activities.filter((activity) => activity.lifecycleStatus === "agent_response_queued");
 	const titleIcon = running.length > 0 ? theme.fg("accent", "●") : theme.fg("success", "✓");
-	const titleMeta = compactParts([
-		running.length > 0 ? `${running.length} working` : undefined,
-		queued.length > 0 ? `${queued.length} queued` : undefined,
-	]);
+	const titleMeta = running.length > 0 ? `${running.length} working` : `${activities.length} visible`;
 	const lines = [truncateToWidth(`${titleIcon} ${theme.bold("Mastra Agents")} ${theme.fg("dim", titleMeta || `${activities.length} visible`)}`, width)];
 	if (maxLines <= 1) return { lines: lines.slice(0, maxLines), visibleCount: 0, hiddenCount: activities.length };
 
-	let bodyBudget = maxLines - 1;
-	let visibleCount = Math.min(activities.length, Math.floor(bodyBudget / 3));
+	let visibleCount = Math.min(activities.length, Math.max(1, Math.floor(maxAgents)));
 	let hiddenCount = activities.length - visibleCount;
-	if (hiddenCount > 0 && bodyBudget > 1) {
-		bodyBudget -= 1;
-		visibleCount = Math.min(activities.length, Math.floor(bodyBudget / 3));
+	while (visibleCount > 0) {
 		hiddenCount = activities.length - visibleCount;
-		lines.push(truncateToWidth(theme.fg("dim", `├─ +${hiddenCount} more`), width));
+		const requiredLines = 1 + (hiddenCount > 0 ? 1 : 0) + visibleCount * 3;
+		if (requiredLines <= maxLines) break;
+		visibleCount -= 1;
 	}
+	hiddenCount = activities.length - visibleCount;
+	if (hiddenCount > 0) lines.push(truncateToWidth(theme.fg("dim", `├─ +${hiddenCount} more`), width));
 
 	const visibleActivities = visibleCount > 0 ? activities.slice(-visibleCount) : [];
 	for (let i = 0; i < visibleActivities.length; i++) {
@@ -638,7 +704,11 @@ function renderCompactActivityList(
 		lines.push(truncateToWidth(`${theme.fg("dim", child + "└ now ")}${theme.fg(activity.errors.length > 0 ? "error" : "muted", output)}`, width));
 	}
 
-	return { lines: lines.slice(0, maxLines), visibleCount, hiddenCount };
+	return { lines, visibleCount, hiddenCount };
+}
+
+function resolveListMaxAgents(options: MastraAgentsWidgetOptions): number {
+	return Math.max(1, positiveInteger(options.listMaxAgents) ?? DEFAULT_WIDGET_LIST_MAX_AGENTS);
 }
 
 function formatActivityToolStream(activity: MastraAgentActivity, theme: Theme, width: number): string {
@@ -668,9 +738,13 @@ function logWidgetDebug(entry: MastraWidgetDebugEntry, options: MastraAgentsWidg
 		`reservedRows=${entry.reservedRows}`,
 		`configuredMaxLines=${entry.configuredMaxLines}`,
 		`effectiveMaxLines=${entry.effectiveMaxLines}`,
+		`spacerRows=${entry.spacerRows}`,
 		`viewportBudget=${entry.viewportBudget ?? "unknown"}`,
 		`renderedLines=${entry.renderedLines}`,
+		`occupiedRows=${entry.occupiedRows}`,
 		`totalActivities=${entry.totalActivities}`,
+		`workingActivities=${entry.workingActivities}`,
+		`hiddenQueuedActivities=${entry.hiddenQueuedActivities}`,
 		`visibleCards=${entry.visibleCards}`,
 		`overflowCards=${entry.overflowCards}`,
 		`clamped=${entry.clamped}`,
@@ -689,6 +763,8 @@ export interface MastraAgentCardOptions {
 	isPartial?: boolean;
 	/** Optional body budget used by the async widget to stack multiple cards. */
 	maxBodyLines?: number;
+	/** Optional total card height. Short content is padded inside the card frame. */
+	fixedTotalLines?: number;
 }
 
 export class MastraAgentCard implements Component {
@@ -766,10 +842,16 @@ export class MastraAgentCard implements Component {
 		}
 
 		if (pinnedBodyLines.length > 0 && bodyLines.length > 0) pinnedBodyLines.push("");
-		const bodyLimit = this.options.maxBodyLines ?? (this.options.expanded ? EXPANDED_CARD_BODY_LINES : COLLAPSED_CARD_BODY_LINES);
+		const fixedTotalLines = positiveInteger(this.options.fixedTotalLines);
+		const fixedBodyLines = fixedTotalLines !== undefined ? Math.max(0, fixedTotalLines - 2) : undefined;
+		const bodyLimit = fixedBodyLines ?? this.options.maxBodyLines ?? (this.options.expanded ? EXPANDED_CARD_BODY_LINES : COLLAPSED_CARD_BODY_LINES);
 		const remainingBodyLimit = Math.max(0, bodyLimit - pinnedBodyLines.length);
 		const scrolledBody = remainingBodyLimit > 0 ? [...pinnedBodyLines, ...tailLines(bodyLines, remainingBodyLimit, th)] : tailLines(pinnedBodyLines, bodyLimit, th);
-		for (const bodyLine of scrolledBody) {
+		const framedBody =
+			fixedBodyLines !== undefined && scrolledBody.length < fixedBodyLines
+				? [...scrolledBody, ...Array.from({ length: fixedBodyLines - scrolledBody.length }, () => "")]
+				: scrolledBody;
+		for (const bodyLine of framedBody) {
 			lines.push(renderFrameRow(bodyLine, width, border));
 		}
 		lines.push(border(`╰${"─".repeat(Math.max(0, width - 2))}╯`));

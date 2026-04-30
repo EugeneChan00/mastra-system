@@ -150,7 +150,8 @@ test("MastraAgentsWidget clamps configured maxLines to terminal viewport rows", 
 	const lines = widget.render(100);
 	widget.dispose();
 
-	assert.ok(lines.length <= 14, `expected terminal-aware budget of 14 lines, got ${lines.length}`);
+	assert.ok(lines.length <= 13, `expected terminal-aware content budget of 13 lines, got ${lines.length}`);
+	assert.ok(lines.length + 1 <= 14, `expected content plus spacer to fit 14-row viewport budget, got ${lines.length + 1}`);
 	assert.ok(lines.length > 1, "card should still use available viewport budget");
 });
 
@@ -192,7 +193,11 @@ test("MastraAgentsWidget emits viewport budget metrics when debug logging is ena
 		const log = await readFile(logPath, "utf8");
 		assert.match(log, /terminalRows=24/);
 		assert.match(log, /configuredMaxLines=60/);
-		assert.match(log, /effectiveMaxLines=14/);
+		assert.match(log, /effectiveMaxLines=13/);
+		assert.match(log, /spacerRows=1/);
+		assert.match(log, /occupiedRows=/);
+		assert.match(log, /workingActivities=1/);
+		assert.match(log, /hiddenQueuedActivities=0/);
 		assert.match(log, /clamped=true/);
 		assert.match(log, /renderedLines=/);
 	} finally {
@@ -204,9 +209,9 @@ test("MastraAgentsWidget emits viewport budget metrics when debug logging is ena
 	}
 });
 
-test("MastraAgentsListWidget renders compact default list above the editor", () => {
+test("MastraAgentsListWidget renders compact default list within spacer-aware budget", () => {
 	const store = new MastraAgentActivityStore(60_000);
-	for (let i = 1; i <= 3; i++) {
+	for (let i = 1; i <= 4; i++) {
 		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
 			agentId: `agent-${i}`,
 			status: "running",
@@ -216,20 +221,46 @@ test("MastraAgentsListWidget renders compact default list above the editor", () 
 	}
 
 	const viewController = new MastraAgentsWidgetViewController("list");
-	const widget = new MastraAgentsListWidget(makeTui(24), stubTheme as any, store, { viewController, listMaxLines: 10 });
+	const widget = new MastraAgentsListWidget(makeTui(24), stubTheme as any, store, { viewController, listMaxLines: 11 });
 	const lines = widget.render(100);
 	widget.dispose();
 
 	assert.ok(lines[0].includes("Mastra Agents"));
-	assert.ok(lines.length <= 10);
-	assert.ok(lines.some((line) => line.includes("agent-3")));
-	assert.equal(lines.filter((line) => line.includes("├ tools")).length, 3);
-	assert.equal(lines.filter((line) => line.includes("└ now")).length, 3);
+	assert.ok(lines.length + 1 <= 11);
+	assert.ok(lines.some((line) => line.includes("+2 more")));
+	assert.ok(lines.some((line) => line.includes("agent-4")));
+	assert.equal(lines.filter((line) => line.includes("├ tools")).length, 2);
+	assert.equal(lines.filter((line) => line.includes("└ now")).length, 2);
 	assert.ok(lines.some((line) => line.includes("read_file")), "list mode should stream tool events");
 	assert.equal(lines.some((line) => line.includes("Mastra: agent-")), false, "list mode should not render full cards");
 });
 
-test("MastraAgentsWidget hides in list mode and uses a fixed region in card mode", () => {
+test("MastraAgentsWidget list mode preselects five newest agents before rendering rows", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 6; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: `output ${i}`,
+			toolCalls: [{ id: `tool-${i}`, name: "workspaceReadFile", type: "call", args: { path: `file-${i}.ts` }, timestamp: i, raw: {} }],
+		}));
+	}
+
+	const viewController = new MastraAgentsWidgetViewController("list");
+	const widget = new MastraAgentsWidget(makeTui(60), stubTheme as any, store, { viewController, listMaxLines: 18, listMaxAgents: 5 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(lines.length, 17);
+	assert.ok(lines.some((line) => line.includes("+1 more")));
+	assert.equal(lines.some((line) => line.includes("agent-1")), false);
+	assert.deepEqual(lines.map(listAgentLabel).filter(Boolean), ["agent-2", "agent-3", "agent-4", "agent-5", "agent-6"]);
+	assert.equal(lines.filter((line) => line.includes("├ tools")).length, 5);
+	assert.equal(lines.filter((line) => line.includes("└ now")).length, 5);
+	assert.equal(lines.some((line) => line.includes("Mastra: agent-")), false);
+});
+
+test("MastraAgentsWidget renders list mode and uses a fixed total card region", () => {
 	const store = new MastraAgentActivityStore(60_000);
 	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
 		agentId: "agent-1",
@@ -239,14 +270,41 @@ test("MastraAgentsWidget hides in list mode and uses a fixed region in card mode
 
 	const viewController = new MastraAgentsWidgetViewController("list");
 	const widget = new MastraAgentsWidget(makeTui(24), stubTheme as any, store, { viewController, fixedRegion: true, maxLines: 10 });
-	assert.deepEqual(widget.render(100), []);
+	const listLines = widget.render(100);
+	assert.ok(listLines.some((line) => line.includes("agent-1")));
+	assert.equal(listLines.some((line) => line.includes("Mastra: agent-")), false, "list mode should not render full cards");
 
 	viewController.setMode("cards");
 	const lines = widget.render(100);
 	widget.dispose();
 
-	assert.equal(lines.length, 10);
+	assert.equal(lines.length, 9);
+	assert.ok(lines.length + 1 <= 10);
 	assert.ok(lines.some((line) => line.includes("Mastra: agent-1")));
+});
+
+test("MastraAgentsWidget list mode does not retain detail region height", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 2; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: Array.from({ length: 20 }, (_, index) => `agent ${i} line ${index + 1}`).join("\n"),
+		}));
+	}
+
+	const viewController = new MastraAgentsWidgetViewController("detail");
+	const widget = new MastraAgentsWidget(makeTui(60), stubTheme as any, store, { viewController, maxLines: 30, listMaxLines: 18, listMaxAgents: 5 });
+	const detailLines = widget.render(100);
+	viewController.setMode("list");
+	const listLines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(detailLines.length, 29);
+	assert.equal(detailLines.at(-1)?.startsWith("╰"), true);
+	assert.equal(listLines.length, 7);
+	assert.notEqual(listLines.at(-1), "", "list render should not end with old blank region padding");
+	assert.equal(listLines.some((line) => line.includes("Mastra: agent-")), false);
 });
 
 test("MastraAgentsWidget detail mode dedicates the region to the focused agent", () => {
@@ -267,9 +325,11 @@ test("MastraAgentsWidget detail mode dedicates the region to the focused agent",
 	const secondFocus = widget.render(100);
 	widget.dispose();
 
-	assert.equal(firstFocus.length, 12);
+	assert.equal(firstFocus.length, 11);
+	assert.ok(firstFocus.length + 1 <= 12);
 	assert.ok(firstFocus.some((line) => line.includes("Mastra: agent-1")));
-	assert.equal(secondFocus.length, 12);
+	assert.equal(secondFocus.length, 11);
+	assert.ok(secondFocus.length + 1 <= 12);
 	assert.ok(secondFocus.some((line) => line.includes("Mastra: agent-2")));
 	assert.equal(secondFocus.filter((line) => line.includes("Mastra: agent-")).length, 1);
 });
@@ -294,7 +354,7 @@ test("MastraAgentsWidget render uses full live width with no artificial cap", ()
 	assert.notEqual(lines120.join(""), lines80.join(""));
 });
 
-test("MastraAgentsWidget keeps queued response card slots stable until explicit end", () => {
+test("MastraAgentsWidget removes completed jobs from visible cards immediately", () => {
 	const store = new MastraAgentActivityStore(60_000);
 	for (let i = 1; i <= 4; i++) {
 		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
@@ -309,14 +369,49 @@ test("MastraAgentsWidget keeps queued response card slots stable until explicit 
 	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
 	const after = widget.render(100).filter((line) => line.includes("Mastra: agent-"));
 
-	assert.deepEqual(after.map(agentLabel), before.map(agentLabel));
-	assert.ok(after[0].includes("done"));
-
-	store.end("call-1");
-	const ended = widget.render(100).filter((line) => line.includes("Mastra: agent-"));
 	widget.dispose();
 
-	assert.deepEqual(ended.map(agentLabel), ["agent-2", "agent-3", "agent-4"]);
+	assert.deepEqual(before.map(agentLabel), ["agent-1", "agent-2", "agent-3", "agent-4"]);
+	assert.deepEqual(after.map(agentLabel), ["agent-2", "agent-3", "agent-4"]);
+	assert.equal(after.some((line) => line.includes("done")), false);
+	assert.equal(store.snapshot().some((activity) => activity.toolCallId === "call-1" && activity.lifecycleStatus === "agent_response_queued"), true);
+});
+
+test("MastraAgentsWidget keeps queued completion hidden after late updates", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "running",
+	}));
+	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
+	store.update("call-1", makeDetails({ agentId: "agent-1", status: "running", text: "late running update" }));
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store);
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.deepEqual(lines, []);
+	assert.equal(store.snapshot()[0]?.lifecycleStatus, "agent_response_queued");
+});
+
+test("MastraAgentActivityStore keeps queued completions until explicit end", async () => {
+	const store = new MastraAgentActivityStore(0);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "running",
+	}));
+	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
+
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	assert.equal(store.snapshot()[0]?.lifecycleStatus, "agent_response_queued");
+
+	store.update("call-1", makeDetails({ agentId: "agent-1", status: "running", text: "late running update" }));
+	assert.equal(store.snapshot()[0]?.lifecycleStatus, "agent_response_queued");
+
+	store.end("call-1");
+	assert.deepEqual(store.snapshot(), []);
 });
 
 test("MastraAgentActivityStore ignores late updates after explicit end", () => {
@@ -332,6 +427,35 @@ test("MastraAgentActivityStore ignores late updates after explicit end", () => {
 	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "aborted", text: "late finish" }));
 
 	assert.deepEqual(store.snapshot(), []);
+});
+
+test("MastraAgentsWidget treats a later same-agent dispatch as newest active work", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 4; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			threadId: "thread-shared",
+			status: "running",
+			text: `output ${i}`,
+		}));
+	}
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 5 });
+	store.finish("call-1", makeDetails({ agentId: "agent-1", threadId: "thread-shared", status: "done", text: "complete" }));
+	store.start("call-5", { agentId: "agent-1", message: "retry task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		threadId: "thread-shared",
+		status: "running",
+		text: "new output",
+	}));
+	const lines = widget.render(100);
+	const labels = lines.filter((line) => line.includes("Mastra: agent-")).map(agentLabel);
+	widget.dispose();
+
+	assert.deepEqual(labels, ["agent-2", "agent-3", "agent-4", "agent-1"]);
+	assert.equal(labels.filter((label) => label === "agent-1").length, 1);
+	assert.ok(lines.some((line) => line.includes("new output")));
+	assert.equal(lines.some((line) => line.includes("complete")), false);
 });
 
 test("MastraAgentsWidget keeps newest jobs visible with newest at the bottom", () => {
@@ -370,7 +494,7 @@ test("MastraAgentsWidget appends new cards from the bottom after ended cards col
 
 	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4 });
 	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "done", text: "complete" }));
-	assert.deepEqual(widget.render(100).filter((line) => line.includes("Mastra: agent-")).map(agentLabel), ["agent-1", "agent-2", "agent-3", "agent-4"]);
+	assert.deepEqual(widget.render(100).filter((line) => line.includes("Mastra: agent-")).map(agentLabel), ["agent-2", "agent-3", "agent-4"]);
 
 	store.end("call-1");
 	store.start("call-5", { agentId: "agent-5", message: "task 5" } as MastraAgentCallInput, makeDetails({
@@ -415,7 +539,24 @@ test("MastraAgentsWidget lets a single card use the total line budget", () => {
 	widget.dispose();
 
 	assert.ok(lines.length > 20, `single card should expand into budget, got ${lines.length}`);
-	assert.ok(lines.length <= 30, `expected maxLines cap, got ${lines.length}`);
+	assert.ok(lines.length + 1 <= 30, `expected total maxLines cap including spacer, got ${lines.length + 1}`);
+});
+
+test("MastraAgentsWidget pads short single-card content inside the frame", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "short output",
+	}));
+
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4, maxLines: 30 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(lines.length, 29);
+	assert.equal(lines.at(-1)?.startsWith("╰"), true);
+	assert.equal(lines.some((line) => line === ""), false, "fixed card region should not use trailing blank lines outside the frame");
 });
 
 test("MastraAgentsWidget divides total height budget across multiple long cards", () => {
@@ -434,6 +575,7 @@ test("MastraAgentsWidget divides total height budget across multiple long cards"
 
 	assert.equal(lines.filter((line) => line.includes("Mastra: agent-")).length, 3);
 	assert.ok(lines.length <= 30, `expected aggregate maxLines cap, got ${lines.length}`);
+	assert.notEqual(lines.at(-1), "", "shared card region should not end with blank padding");
 	for (const label of ["agent-1", "agent-2", "agent-3"]) {
 		assert.ok(lines.some((line) => line.includes(`Mastra: ${label}`)), `${label} should stay visible`);
 	}
@@ -452,21 +594,26 @@ test("MastraAgentsWidget preserves whole newest cards under tight height budget"
 		}));
 	}
 
-	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4, maxLines: 12 });
+	const widget = new MastraAgentsWidget({ requestRender() {} }, stubTheme as any, store, { maxCards: 4, maxLines: 13 });
 	const lines = widget.render(100);
 	widget.dispose();
 
-	assert.ok(lines.length <= 12, `expected tight maxLines cap, got ${lines.length}`);
+	assert.ok(lines.length + 1 <= 13, `expected tight total maxLines cap, got ${lines.length + 1}`);
 	assert.match(lines[0], /\+3 more/);
 	assert.deepEqual(lines.filter((line) => line.includes("Mastra: agent-")).map(agentLabel), ["agent-4", "agent-5"]);
 	assert.equal(lines.filter((line) => line.startsWith("╭")).length, 2);
 	assert.equal(lines.filter((line) => line.startsWith("╰")).length, 2);
 	assert.equal(lines.at(-1)?.startsWith("╰"), true, "render should end at a whole-card bottom border");
+	assert.notEqual(lines.at(-1), "", "tight card region should not end with blank padding");
 });
 
 function agentLabel(line: string): string {
 	const match = line.match(/Mastra: (agent-\d+)/);
 	return match?.[1] ?? line;
+}
+
+function listAgentLabel(line: string): string | undefined {
+	return line.match(/\b(agent-\d+)\b/)?.[1];
 }
 
 function makeTui(rows?: number): { requestRender(): void; terminal?: { rows: number } } {
