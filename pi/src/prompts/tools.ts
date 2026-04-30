@@ -1,5 +1,5 @@
 export const PI_AGENT_AS_TOOL_PROMPT = `Agents as tools:
-
+//work item 2
 Worker agents are tools for bounded background work. Use them when they can reduce uncertainty, inspect a well-defined surface, implement inside an approved boundary, or validate evidence without blocking the immediate next step.
 
 Treat every worker output as probabilistic until it is tied to evidence. A useful worker result states what it inspected, what it changed or did not change, what evidence supports the claim, what remains uncertain, and where Pi can verify the result.
