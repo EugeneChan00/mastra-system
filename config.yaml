@@ -5,8 +5,11 @@ mastra-agent-extension:
   listMaxAgents: 5
   reservedRows: 10
   defaultViewMode: list
-  viewModeShortcut: ctrl+h
+  viewModeShortcut: alt+h
   nextAgentShortcut: ctrl+down
   previousAgentShortcut: ctrl+up
+  detailScrollDownShortcut: alt+j
+  detailScrollUpShortcut: alt+k
+  detailStreamOnlyShortcut: alt+s
   debug: true
   debugPiRedraw: true

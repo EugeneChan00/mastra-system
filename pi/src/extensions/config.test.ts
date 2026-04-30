@@ -25,7 +25,7 @@ test("loadMastraAgentExtensionConfig reads widget and debug values from config.y
 	const cwd = await mkdtemp(join(tmpdir(), "mastra-config-valid-"));
 	await writeFile(
 		join(cwd, "config.yaml"),
-		"mastra-agent-extension:\n  maxCards: 4\n  maxLines: 60\n  listMaxLines: 10\n  listMaxAgents: 5\n  reservedRows: 12\n  defaultViewMode: cards\n  viewModeShortcut: ctrl+h\n  nextAgentShortcut: ctrl+down\n  previousAgentShortcut: ctrl+up\n  debug: true\n  debugPiRedraw: true\n  debugLogPath: /tmp/mastra-widget.log\n",
+		"mastra-agent-extension:\n  maxCards: 4\n  maxLines: 60\n  listMaxLines: 10\n  listMaxAgents: 5\n  reservedRows: 12\n  defaultViewMode: cards\n  viewModeShortcut: ctrl+]\n  nextAgentShortcut: alt+n\n  previousAgentShortcut: alt+p\n  detailScrollDownShortcut: alt+d\n  detailScrollUpShortcut: alt+u\n  detailStreamOnlyShortcut: alt+t\n  debug: true\n  debugPiRedraw: true\n  debugLogPath: /tmp/mastra-widget.log\n",
 		"utf8",
 	);
 
@@ -35,9 +35,12 @@ test("loadMastraAgentExtensionConfig reads widget and debug values from config.y
 	assert.equal(result.debugPiRedraw, true);
 	assert.equal(result.defaultViewMode, "cards");
 	assert.deepEqual(result.shortcuts, {
-		viewMode: "ctrl+h",
-		nextAgent: "ctrl+down",
-		previousAgent: "ctrl+up",
+		viewMode: "ctrl+]",
+		nextAgent: "alt+n",
+		previousAgent: "alt+p",
+		detailScrollDown: "alt+d",
+		detailScrollUp: "alt+u",
+		detailStreamOnly: "alt+t",
 	});
 	assert.equal(result.warning, undefined);
 });

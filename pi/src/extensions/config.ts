@@ -12,15 +12,21 @@ export const DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS: Required<Pick<MastraAgentsWidg
 };
 export const DEFAULT_MASTRA_AGENT_VIEW_MODE: MastraAgentsViewMode = "list";
 export const DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS: MastraAgentExtensionShortcuts = {
-	viewMode: "ctrl+h",
+	viewMode: "alt+h",
 	nextAgent: "ctrl+down",
 	previousAgent: "ctrl+up",
+	detailScrollDown: "alt+j",
+	detailScrollUp: "alt+k",
+	detailStreamOnly: "alt+s",
 };
 
 export interface MastraAgentExtensionShortcuts {
 	viewMode: string;
 	nextAgent: string;
 	previousAgent: string;
+	detailScrollDown: string;
+	detailScrollUp: string;
+	detailStreamOnly: string;
 }
 
 export interface MastraAgentExtensionConfigResult {
@@ -102,6 +108,9 @@ function parseMastraAgentExtensionConfig(raw: string, path: string): MastraAgent
 	const viewModeShortcut = readString(section.viewModeShortcut, "viewModeShortcut", warnings);
 	const nextAgentShortcut = readString(section.nextAgentShortcut, "nextAgentShortcut", warnings);
 	const previousAgentShortcut = readString(section.previousAgentShortcut, "previousAgentShortcut", warnings);
+	const detailScrollDownShortcut = readString(section.detailScrollDownShortcut, "detailScrollDownShortcut", warnings);
+	const detailScrollUpShortcut = readString(section.detailScrollUpShortcut, "detailScrollUpShortcut", warnings);
+	const detailStreamOnlyShortcut = readString(section.detailStreamOnlyShortcut, "detailStreamOnlyShortcut", warnings);
 	return {
 		options: {
 			maxCards: maxCards ?? DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.maxCards,
@@ -118,6 +127,9 @@ function parseMastraAgentExtensionConfig(raw: string, path: string): MastraAgent
 			viewMode: viewModeShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.viewMode,
 			nextAgent: nextAgentShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.nextAgent,
 			previousAgent: previousAgentShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.previousAgent,
+			detailScrollDown: detailScrollDownShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.detailScrollDown,
+			detailScrollUp: detailScrollUpShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.detailScrollUp,
+			detailStreamOnly: detailStreamOnlyShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.detailStreamOnly,
 		},
 		path,
 		found: true,

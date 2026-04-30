@@ -1585,6 +1585,7 @@ function isMastraAgentChunkType(type: string): boolean {
 	return [
 		"text-delta",
 		"reasoning-delta",
+		"reasoning",
 		"tool-call",
 		"tool-result",
 		"tool-error",

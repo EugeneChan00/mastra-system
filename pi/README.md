@@ -37,14 +37,19 @@ mastra-agent-extension:
   listMaxAgents: 5
   reservedRows: 10
   defaultViewMode: list
-  viewModeShortcut: ctrl+h
+  viewModeShortcut: alt+h
   nextAgentShortcut: ctrl+down
   previousAgentShortcut: ctrl+up
+  detailScrollDownShortcut: alt+j
+  detailScrollUpShortcut: alt+k
+  detailStreamOnlyShortcut: alt+s
   debug: true
   debugPiRedraw: true
 ```
 
 Defaults are `maxCards: 4`, `maxLines: 60`, `listMaxLines: 18`, `listMaxAgents: 5`, `reservedRows: 10`, and `defaultViewMode: list`. List mode renders a compact above-editor job list with three lines per visible agent and a `+N more` marker when more than `listMaxAgents` jobs are working. `viewModeShortcut` cycles list → card region → detail region. The card/detail region also renders above the editor at a fixed height while jobs are visible, bounded by `maxLines` and the current terminal viewport. `nextAgentShortcut` and `previousAgentShortcut` focus running jobs in detail mode.
+
+Detail mode supports keyboard scrolling with `detailScrollDownShortcut` and `detailScrollUpShortcut`, and `detailStreamOnlyShortcut` hides the submitted prompt and reasoning while keeping agent output and tool events visible. Widget hotkeys are installed from the active session `config.yaml`; scroll keys are consumed only when detail mode has visible running jobs. Raw Backspace and Enter-compatible terminal bytes are not consumed for `ctrl+h` or `ctrl+j`; terminals that disambiguate control keys can still use those shortcuts, and other environments can remap them in `config.yaml`.
 
 `debug: true` writes widget metrics to `~/.pi/agent/mastra-widget-debug.log`; `debugPiRedraw: true` also enables Pi's `~/.pi/agent/pi-debug.log` redraw reasons.
 

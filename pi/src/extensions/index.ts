@@ -1,10 +1,10 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { Text, type KeyId } from "@mariozechner/pi-tui";
+import { matchesKey, Text, type KeyId } from "@mariozechner/pi-tui";
 import { MASTRA_AGENT_RESULT_MESSAGE_TYPE, MASTRA_STATUS_KEY } from "../const.js";
 import { MastraAsyncAgentManager, MastraHttpClient, createMastraTools } from "../mastra/index.js";
 import { MastraAgentActivityStore, MastraAgentsWidget, MastraAgentsWidgetViewController, type MastraAgentsViewMode } from "../tui/index.js";
 import type { MastraAgentAsyncJobSummary, MastraAgentInfo, MastraWorkflowInfo, MastraWorkflowRun } from "../mastra/index.js";
-import { loadMastraAgentExtensionConfig, loadMastraAgentExtensionConfigSync, type MastraAgentExtensionShortcuts } from "./config.js";
+import { loadMastraAgentExtensionConfig, type MastraAgentExtensionShortcuts } from "./config.js";
 
 const MASTRA_AGENT_WIDGET_ID = "mastra-agents";
 const LEGACY_MASTRA_AGENT_WIDGET_IDS = [MASTRA_AGENT_WIDGET_ID, "mastra-agents-list", "mastra-agents-region"] as const;
@@ -12,8 +12,7 @@ const LEGACY_MASTRA_AGENT_WIDGET_IDS = [MASTRA_AGENT_WIDGET_ID, "mastra-agents-l
 export default function mastraPiExtension(pi: ExtensionAPI) {
 	const client = new MastraHttpClient();
 	const activityStore = new MastraAgentActivityStore();
-	const startupWidgetConfig = loadMastraAgentExtensionConfigSync(process.cwd());
-	const viewController = new MastraAgentsWidgetViewController(startupWidgetConfig.defaultViewMode);
+	const viewController = new MastraAgentsWidgetViewController();
 	const asyncAgentManager = new MastraAsyncAgentManager(client, {
 		activitySink: activityStore,
 		useWorkflowJobs: false,
@@ -35,9 +34,8 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	});
 	let unsubscribeActivityStatus: (() => void) | undefined;
 	let unmountMastraWidget: (() => void) | undefined;
+	let uninstallMastraWidgetShortcuts: (() => void) | undefined;
 	let statusLabel = "offline";
-
-	registerMastraWidgetShortcuts(pi, startupWidgetConfig.shortcuts, viewController, activityStore);
 
 	for (const tool of createMastraTools(client, { agentActivitySink: activityStore, asyncAgentManager })) {
 		pi.registerTool(tool as any);
@@ -103,8 +101,10 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		unsubscribeActivityStatus?.();
+		uninstallMastraWidgetShortcuts?.();
 		unmountMastraWidget?.();
 		unmountMastraWidget = undefined;
+		uninstallMastraWidgetShortcuts = undefined;
 		const piSessionId = ctx.sessionManager.getSessionId();
 		asyncAgentManager.configureSession({
 			piSessionId,
@@ -114,7 +114,8 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 		let syncMastraWidget = () => undefined;
 		if (ctx.hasUI) {
 			const widgetConfig = await loadMastraAgentExtensionConfig(ctx.cwd);
-			viewController.setMode(widgetConfig.defaultViewMode);
+			viewController.reset(widgetConfig.defaultViewMode);
+			uninstallMastraWidgetShortcuts = installMastraWidgetTerminalShortcuts(ctx.ui, widgetConfig.shortcuts, viewController, activityStore);
 			if (widgetConfig.warning) ctx.ui.notify(widgetConfig.warning, "warning");
 			if (widgetConfig.debugPiRedraw && process.env.PI_DEBUG_REDRAW === undefined) process.env.PI_DEBUG_REDRAW = "1";
 			for (const widgetId of LEGACY_MASTRA_AGENT_WIDGET_IDS) ctx.ui.setWidget(widgetId, undefined);
@@ -141,7 +142,9 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 			syncMastraWidget();
 		}
 		unsubscribeActivityStatus = activityStore.subscribe(() => {
-			const running = activityStore.snapshot({ includeFinished: false }).length;
+			const runningActivities = activityStore.snapshot({ includeFinished: false });
+			viewController.syncActivities(runningActivities);
+			const running = runningActivities.length;
 			syncMastraWidget();
 			ctx.ui.setStatus(MASTRA_STATUS_KEY, running > 0 ? `mastra: ${running} running` : `mastra: ${statusLabel}`);
 		});
@@ -167,41 +170,85 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 		asyncAgentManager.detachAll("Pi session shutdown");
 		unmountMastraWidget?.();
 		unmountMastraWidget = undefined;
+		uninstallMastraWidgetShortcuts?.();
+		uninstallMastraWidgetShortcuts = undefined;
 		unsubscribeActivityStatus?.();
 		unsubscribeActivityStatus = undefined;
 	});
 }
 
-function registerMastraWidgetShortcuts(
-	pi: ExtensionAPI,
+function installMastraWidgetTerminalShortcuts(
+	ui: ExtensionCommandContext["ui"],
 	shortcuts: MastraAgentExtensionShortcuts,
 	viewController: MastraAgentsWidgetViewController,
 	activityStore: MastraAgentActivityStore,
-): void {
-	const registered = new Set<string>();
-	const register = (shortcut: string, description: string, handler: Parameters<ExtensionAPI["registerShortcut"]>[1]["handler"]) => {
-		if (registered.has(shortcut)) return;
-		registered.add(shortcut);
-		pi.registerShortcut(shortcut as KeyId, { description, handler });
-	};
+): () => void {
+	const workingActivities = () => activityStore.snapshot({ includeFinished: false });
+	return ui.onTerminalInput((data) => {
+		if (matchesMastraWidgetShortcut(data, shortcuts.viewMode)) {
+			const activities = workingActivities();
+			if (activities.length === 0) return undefined;
+			const mode = viewController.cycleMode();
+			if (mode === "detail") viewController.focusNext(activities, 0);
+			ui.notify(`Mastra agents: ${formatViewMode(mode)}`, "info");
+			return { consume: true };
+		}
 
-	register(shortcuts.viewMode, "Cycle Mastra agent widget view", (ctx) => {
-		const mode = viewController.cycleMode();
-		if (mode === "detail") viewController.focusNext(activityStore.snapshot({ includeFinished: false }), 0);
-		ctx.ui.notify(`Mastra agents: ${formatViewMode(mode)}`, "info");
-	});
+		if (matchesMastraWidgetShortcut(data, shortcuts.nextAgent)) {
+			const activities = workingActivities();
+			if (activities.length === 0) return undefined;
+			viewController.setMode("detail");
+			const activity = viewController.focusNext(activities, 1);
+			ui.notify(activity ? `Mastra detail: ${activity.agentId}` : "No Mastra agent jobs", "info");
+			return { consume: true };
+		}
 
-	register(shortcuts.nextAgent, "Focus next Mastra agent in detail view", (ctx) => {
-		viewController.setMode("detail");
-		const activity = viewController.focusNext(activityStore.snapshot({ includeFinished: false }), 1);
-		ctx.ui.notify(activity ? `Mastra detail: ${activity.agentId}` : "No Mastra agent jobs", "info");
-	});
+		if (matchesMastraWidgetShortcut(data, shortcuts.previousAgent)) {
+			const activities = workingActivities();
+			if (activities.length === 0) return undefined;
+			viewController.setMode("detail");
+			const activity = viewController.focusNext(activities, -1);
+			ui.notify(activity ? `Mastra detail: ${activity.agentId}` : "No Mastra agent jobs", "info");
+			return { consume: true };
+		}
 
-	register(shortcuts.previousAgent, "Focus previous Mastra agent in detail view", (ctx) => {
-		viewController.setMode("detail");
-		const activity = viewController.focusNext(activityStore.snapshot({ includeFinished: false }), -1);
-		ctx.ui.notify(activity ? `Mastra detail: ${activity.agentId}` : "No Mastra agent jobs", "info");
+		if (matchesMastraWidgetShortcut(data, shortcuts.detailScrollDown)) {
+			const activities = workingActivities();
+			if (viewController.getMode() !== "detail" || activities.length === 0) return undefined;
+			const activity = viewController.getFocusedActivity(activities);
+			const offset = viewController.scrollDetailDown(activity?.toolCallId);
+			ui.notify(activity ? `Mastra detail scroll: ${offset === 0 ? "live" : `+${offset}`}` : "No Mastra agent jobs", "info");
+			return { consume: true };
+		}
+
+		if (matchesMastraWidgetShortcut(data, shortcuts.detailScrollUp)) {
+			const activities = workingActivities();
+			if (viewController.getMode() !== "detail" || activities.length === 0) return undefined;
+			const activity = viewController.getFocusedActivity(activities);
+			const offset = viewController.scrollDetailUp(activity?.toolCallId);
+			ui.notify(activity ? `Mastra detail scroll: +${offset}` : "No Mastra agent jobs", "info");
+			return { consume: true };
+		}
+
+		if (matchesMastraWidgetShortcut(data, shortcuts.detailStreamOnly)) {
+			const activities = workingActivities();
+			if (activities.length === 0) return undefined;
+			viewController.setMode("detail");
+			viewController.focusNext(activities, 0);
+			const enabled = viewController.toggleDetailStreamOnly();
+			ui.notify(`Mastra detail: ${enabled ? "stream-only" : "full"}`, "info");
+			return { consume: true };
+		}
+
+		return undefined;
 	});
+}
+
+export function matchesMastraWidgetShortcut(data: string, shortcut: string): boolean {
+	const normalized = shortcut.trim().toLowerCase();
+	if (normalized === "ctrl+h" && (data === "\b" || data === "\x7f")) return false;
+	if (normalized === "ctrl+j" && data === "\n") return false;
+	return matchesKey(data, shortcut as KeyId);
 }
 
 function formatViewMode(mode: MastraAgentsViewMode): string {

@@ -20,6 +20,11 @@ const stubTheme: Record<string, (...args: string[]) => string> = {
 	bold: (text: string) => text,
 	dim: (text: string) => text,
 };
+const markerTheme: Record<string, (...args: string[]) => string> = {
+	fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+	bold: (text: string) => `<bold>${text}</bold>`,
+	dim: (text: string) => `<dim>${text}</dim>`,
+};
 
 test("filterPromptScaffolding removes Expected return status prefix", () => {
 	const result = filterPromptScaffolding("Expected return status: success. Here is my analysis.");
@@ -332,6 +337,177 @@ test("MastraAgentsWidget detail mode dedicates the region to the focused agent",
 	assert.ok(secondFocus.length + 1 <= 12);
 	assert.ok(secondFocus.some((line) => line.includes("Mastra: agent-2")));
 	assert.equal(secondFocus.filter((line) => line.includes("Mastra: agent-")).length, 1);
+});
+
+test("MastraAgentsWidget detail mode scrolls within fixed region", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join("\n"),
+	}));
+
+	const viewController = new MastraAgentsWidgetViewController("detail");
+	const widget = new MastraAgentsWidget(makeTui(30), stubTheme as any, store, { viewController, fixedRegion: true, maxLines: 12 });
+	const liveLines = widget.render(100);
+	viewController.scrollDetailUp("call-1", 10);
+	const scrolledLines = widget.render(100);
+	viewController.scrollDetailDown("call-1", 10);
+	const returnedLines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(liveLines.length, 11);
+	assert.equal(scrolledLines.length, 11);
+	assert.equal(returnedLines.length, 11);
+	assert.ok(liveLines.join("\n").includes("line 40"), "live detail should follow newest output");
+	assert.ok(scrolledLines.join("\n").includes("later lines"), "scrolled detail should show hidden later marker");
+	assert.equal(scrolledLines.join("\n").includes("line 40"), false, "scrolling up should move away from live tail");
+	assert.ok(returnedLines.join("\n").includes("line 40"), "scrolling down should return to live tail");
+});
+
+test("MastraAgentsWidget detail mode clamps displayed scroll offset to rendered content", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "short output",
+	}));
+
+	const viewController = new MastraAgentsWidgetViewController("detail");
+	viewController.scrollDetailUp("call-1", 100);
+	const widget = new MastraAgentsWidget(makeTui(30), stubTheme as any, store, { viewController, fixedRegion: true, maxLines: 12 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(lines.some((line) => line.includes("scroll +")), false, "short output should not show an impossible scroll offset");
+	assert.equal(viewController.getDetailScrollOffset("call-1"), 0, "render should clear latent impossible scroll offsets");
+});
+
+test("MastraAgentsWidget detail mode avoids clipped card frames in tiny viewports", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "short output",
+	}));
+
+	const viewController = new MastraAgentsWidgetViewController("detail");
+	const widget = new MastraAgentsWidget(makeTui(13), stubTheme as any, store, { viewController, fixedRegion: true, maxLines: 60, reservedRows: 10 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(lines.length, 2);
+	assert.equal(lines.some((line) => line.startsWith("╭")), false);
+	assert.equal(lines.some((line) => line.startsWith("╰")), false);
+	assert.ok(lines.some((line) => line.includes("short output")));
+});
+
+test("MastraAgentsWidgetViewController resets and prunes detail-only state", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "output",
+	}));
+	const viewController = new MastraAgentsWidgetViewController("detail");
+	viewController.focusNext(store.snapshot({ includeFinished: false }), 1);
+	viewController.toggleDetailStreamOnly();
+	viewController.scrollDetailUp("call-1", 10);
+
+	assert.equal(viewController.isDetailStreamOnly(), true);
+	assert.equal(viewController.getDetailScrollOffset("call-1"), 10);
+
+	viewController.syncActivities([]);
+	assert.equal(viewController.getDetailScrollOffset("call-1"), 0, "scroll offsets should be dropped for non-visible jobs");
+
+	viewController.reset("list");
+	assert.equal(viewController.getMode(), "list");
+	assert.equal(viewController.isDetailStreamOnly(), false, "new sessions should not inherit stream-only detail state");
+});
+
+test("MastraAgentsWidget detail stream-only mode hides prompt and reasoning", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "submitted prompt" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		prompt: "submitted prompt",
+		text: "streamed output",
+		reasoning: "private reasoning",
+		toolCalls: [{ id: "tool-1", name: "workspaceReadFile", type: "call", args: { path: "src/index.ts" }, timestamp: 1, raw: {} }],
+		toolResults: [{ id: "tool-1", name: "workspaceReadFile", type: "result", args: { path: "src/index.ts" }, result: "tool result body", timestamp: 2, raw: {} }],
+	}));
+
+	const viewController = new MastraAgentsWidgetViewController("detail");
+	const widget = new MastraAgentsWidget(makeTui(30), stubTheme as any, store, { viewController, fixedRegion: true, maxLines: 18 });
+	const fullLines = widget.render(100).join("\n");
+	viewController.toggleDetailStreamOnly();
+	const streamOnlyLines = widget.render(100).join("\n");
+	widget.dispose();
+
+	assert.ok(fullLines.includes("Prompt"));
+	assert.ok(fullLines.includes("Reasoning"));
+	assert.ok(streamOnlyLines.includes("stream-only"));
+	assert.ok(streamOnlyLines.includes("streamed output"));
+	assert.ok(streamOnlyLines.includes("read_file"), "stream-only detail should keep tool events visible");
+	assert.equal(streamOnlyLines.includes("submitted prompt"), false);
+	assert.equal(streamOnlyLines.includes("private reasoning"), false);
+});
+
+test("MastraAgentCard renders expanded tool output through markdown", () => {
+	const details = makeDetails({
+		text: "answer",
+		toolResults: [{
+			id: "tool-1",
+			name: "workspaceReadFile",
+			type: "result",
+			args: { path: "README.md" },
+			result: "Tool says **bold**\n\n- first\n- second",
+			timestamp: 1,
+			raw: {},
+		}],
+	});
+	const card = new MastraAgentCard(details, { expanded: true, fixedTotalLines: 28 }, stubTheme as any);
+	const joined = card.render(100).join("\n");
+
+	assert.ok(joined.includes("read_file"));
+	assert.ok(joined.includes("Tool says"));
+	assert.ok(joined.includes("bold"));
+	assert.equal(joined.includes("**bold**"), false);
+});
+
+test("MastraAgentCard stream-only tool output keeps markdown body at normal contrast", () => {
+	const details = makeDetails({
+		text: "answer",
+		toolResults: [{
+			id: "tool-1",
+			name: "workspaceReadFile",
+			type: "result",
+			args: { path: "README.md" },
+			result: "Tool says **bold**",
+			timestamp: 1,
+			raw: {},
+		}],
+	});
+	const card = new MastraAgentCard(details, { expanded: true, streamOnly: true, fixedTotalLines: 24 }, markerTheme as any);
+	const joined = card.render(120).join("\n");
+
+	assert.ok(joined.includes("Tool says"));
+	assert.ok(joined.includes("<dim>  ⎿ </dim>"), "tool-output prefix should remain secondary");
+	assert.equal(joined.includes("<dim>Tool says"), false, "tool-output body should not inherit dim styling");
+	assert.equal(joined.includes("**bold**"), false);
+});
+
+test("MastraAgentCard renders reasoning through markdown in expanded mode", () => {
+	const details = makeDetails({
+		text: "answer",
+		reasoning: "Reasoning says **bold**",
+	});
+	const card = new MastraAgentCard(details, { expanded: true, fixedTotalLines: 18 }, stubTheme as any);
+	const joined = card.render(100).join("\n");
+
+	assert.ok(joined.includes("Reasoning"));
+	assert.ok(joined.includes("bold"));
+	assert.equal(joined.includes("**bold**"), false);
 });
 
 test("MastraAgentsWidget render uses full live width with no artificial cap", () => {
