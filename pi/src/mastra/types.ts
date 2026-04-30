@@ -12,6 +12,10 @@ export interface MastraAgentCallInput {
 	message: string;
 	jobName?: string;
 	modeId?: string;
+	"harness-mode"?: string;
+	harnessMode?: string;
+	harnessModeId?: string;
+	hardnessMode?: string;
 	threadId?: string;
 	resourceId?: string;
 	maxSteps?: number;
@@ -97,6 +101,9 @@ export interface MastraStreamRequest {
 	activeTools?: string[];
 	requestContext?: Record<string, unknown>;
 	input_args?: MastraAgentInputArgs;
+	harnessMode?: string;
+	harnessModeId?: string;
+	hardnessMode?: string;
 }
 
 export interface MastraWorkflowStepInfo {
@@ -225,6 +232,9 @@ export interface MastraUsage {
 export interface MastraAgentCallDetails {
 	agentId: string;
 	modeId?: string;
+	harnessMode?: string;
+	harnessModeId?: string;
+	hardnessMode?: string;
 	prompt?: string;
 	threadId: string;
 	resourceId: string;
@@ -255,6 +265,10 @@ export interface MastraAgentQueryInput {
 	message: string;
 	jobName?: string;
 	synchronous?: boolean;
+	"harness-mode"?: string;
+	harnessMode?: string;
+	harnessModeId?: string;
+	hardnessMode?: string;
 	threadId?: string;
 	resourceId?: string;
 	requestContext?: Record<string, unknown>;
@@ -284,6 +298,9 @@ export interface MastraAgentAsyncJobSummary {
 	jobName?: string;
 	agentId: string;
 	modeId?: string;
+	harnessMode?: string;
+	harnessModeId?: string;
+	hardnessMode?: string;
 	threadId: string;
 	resourceId: string;
 	piSessionId?: string;

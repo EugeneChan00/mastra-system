@@ -1,49 +1,34 @@
 import { Agent } from "@mastra/core/agent";
 
-import { daytonaTools } from "../tools/daytona";
-import { workspaceTools } from "../tools/workspace";
-import { advisorAgent } from "./advisor-agent";
-import { architectAgent } from "./architect-agent";
-import { controlAgent } from "./control-agent";
-import { developerAgent } from "./developer-agent";
-import { supervisorOperatingPrompt } from "./prompts";
-import { researcherAgent } from "./researcher-agent";
-import { scoutAgent } from "./scout-agent";
-import { agentDefaultOptions, createAgentMemory, defaultSupervisorModel } from "./shared";
-import { validatorAgent } from "./validator-agent";
+import {
+  supervisorAgentDescription,
+  supervisorInstructionsPrompt,
+  supervisorModePrompts,
+  supervisorPolicyPrompts,
+  supervisorToolPrompts,
+} from "../prompts/agents/supervisor.js";
+import { sharedPolicyPrompts } from "../prompts/policy.js";
+import { sharedToolPrompts } from "../prompts/tools.js";
+import { workspaceTools } from "../tools/workspace.js";
+import { advisorAgent } from "./advisor-agent.js";
+import { architectAgent } from "./architect-agent.js";
+import { developerAgent } from "./developer-agent.js";
+import { researcherAgent } from "./researcher-agent.js";
+import { scoutAgent } from "./scout-agent.js";
+import { agentDefaultOptions, agentModesFromPrompts, composeAgentInstructions, createAgentMemory, defaultSupervisorModel, withAgentModes } from "./shared.js";
+import { validatorAgent } from "./validator-agent.js";
 
-const supervisorPrompt = `${supervisorOperatingPrompt}
-
-# Registered specialist agents
-
-The supervisor may delegate to these native Mastra Agent instances:
-- scoutAgent: repository discovery and current-state inspection.
-- researcherAgent: documentation, ecosystem, package, and version-sensitive evidence.
-- architectAgent: boundaries, interfaces, state ownership, contracts, invariants, and integration design.
-- advisorAgent: critique of plans, assumptions, risks, tradeoffs, and scope creep.
-- developerAgent: bounded implementation after write boundary and central behavior are explicit.
-- validatorAgent: read-only validation of claims, diffs, contracts, tests, and evidence.
-
-Do not describe these specialists as agents from the sibling coding harness. They are Mastra supervisor-delegated specialist agents.
-
-# Project-specific execution policy
-
-- Use the configured Mastra workspace as the normal coding environment; when Mastra is already inside Daytona, this is the current sandbox with its /home, /workspace, and /shared mounts.
-- Prefer list_files and read_file before deciding on edits.
-- Prefer write_file or edit_file for file changes when project-file mutation is required.
-- Use daytonaCheckApi and daytonaListSandboxes for control-plane diagnostics.
-- Use daytonaCreateCodingSandbox only for explicit sandbox lifecycle tasks or recovery, not as the default response to a coding request.
-- Preserve unrelated worktree changes; never revert user work unless explicitly instructed.
-
-# Final answer guidance
-
-When useful, structure the final response with status, summary, facts, assumptions, findings, files changed, commands run, verification, risks, and next actions. Keep the user looped in without flooding them.`;
-
-export const supervisorAgent = new Agent({
+export const supervisorAgent = withAgentModes(new Agent({
   id: "supervisor-agent",
-  name: "Daytona Agents Supervisor",
-  description: "Streaming supervisor agent that delegates to specialist Mastra agents for current-sandbox or Daytona-backed coding work.",
-  instructions: supervisorPrompt,
+  name: "Supervisor Lead",
+  description: supervisorAgentDescription,
+  instructions: composeAgentInstructions(
+    supervisorInstructionsPrompt,
+    sharedPolicyPrompts.supervisor,
+    sharedToolPrompts.supervisor,
+    supervisorPolicyPrompts,
+    supervisorToolPrompts,
+  ),
   model: defaultSupervisorModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.supervisor,
@@ -56,19 +41,15 @@ export const supervisorAgent = new Agent({
     validatorAgent,
   },
   tools: {
-    daytonaCheckApi: daytonaTools.checkApi,
-    daytonaCreateCodingSandbox: daytonaTools.createCodingSandbox,
-    daytonaListSandboxes: daytonaTools.listSandboxes,
     list_files: workspaceTools.listFiles,
     read_file: workspaceTools.readFile,
     write_file: workspaceTools.writeFile,
     edit_file: workspaceTools.replaceInFile,
   },
-});
+}), agentModesFromPrompts(supervisorModePrompts));
 
 export const mastraAgents = {
   supervisorAgent,
-  controlAgent,
   scoutAgent,
   researcherAgent,
   architectAgent,

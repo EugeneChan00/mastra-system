@@ -1,7 +1,7 @@
 import { Daytona, type Resources, type VolumeMount } from "@daytona/sdk";
 import { DaytonaSandbox, type DaytonaSandboxOptions } from "@mastra/daytona";
 
-import { resolveSandboxCreationEnv } from "./sandbox-config";
+import { resolveSandboxCreationEnv } from "./sandbox-config.js";
 
 type DaytonaClient = Daytona;
 type DaytonaSandboxInstance = Awaited<ReturnType<DaytonaClient["create"]>>;

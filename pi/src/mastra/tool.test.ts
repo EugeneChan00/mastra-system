@@ -163,6 +163,35 @@ test("top-level modeId overrides requestContext.modeId", () => {
 	assert.deepEqual(request.requestContext, { modeId: "implement" });
 });
 
+test("harness-mode is forwarded to requestContext.harnessMode", () => {
+	const request = createStreamRequest({ agentId: "agent", message: "hello", "harness-mode": "build" }, "thread", "resource");
+	assert.deepEqual(request.requestContext, { harnessMode: "build" });
+	assert.equal(request.harnessMode, "build");
+});
+
+test("top-level harness-mode overrides requestContext.harnessMode", () => {
+	const request = createStreamRequest(
+		{ agentId: "agent", message: "hello", "harness-mode": "audit", requestContext: { harnessMode: "old" } },
+		"thread",
+		"resource",
+	);
+	assert.deepEqual(request.requestContext, { harnessMode: "audit" });
+});
+
+test("harnessModeId is accepted as resolved Harness mode context", () => {
+	const request = createStreamRequest({ agentId: "agent", message: "hello", harnessModeId: "developer.build" }, "thread", "resource");
+	assert.deepEqual(request.requestContext, { harnessMode: "developer.build", harnessModeId: "developer.build" });
+	assert.equal(request.harnessMode, "developer.build");
+	assert.equal(request.harnessModeId, "developer.build");
+});
+
+test("deprecated hardnessMode is still forwarded as compatibility context", () => {
+	const request = createStreamRequest({ agentId: "agent", message: "hello", hardnessMode: "developer" }, "thread", "resource");
+	assert.deepEqual(request.requestContext, { harnessMode: "developer", hardnessMode: "developer" });
+	assert.equal(request.harnessMode, "developer");
+	assert.equal(request.hardnessMode, "developer");
+});
+
 test("uses Mastra memory payload shape", () => {
 	const request = createStreamRequest({ agentId: "agent", message: "hello" }, "thread", "resource");
 	assert.deepEqual(request.memory, { thread: "thread", resource: "resource" });
@@ -230,7 +259,7 @@ test("createMastraTools registers agent_query and preserves workflow tools", () 
 
 test("agent_query schema is narrower than lower-level agent tools", () => {
 	const properties = (MASTRA_AGENT_QUERY_PARAMETERS as any).properties;
-	for (const key of ["agentId", "message", "jobName", "synchronous", "threadId", "resourceId", "requestContext", "includeToolResults", "includeReasoning", "timeoutMs", "input_args"]) {
+	for (const key of ["agentId", "message", "jobName", "synchronous", "harness-mode", "hardnessMode", "threadId", "resourceId", "requestContext", "includeToolResults", "includeReasoning", "timeoutMs", "input_args"]) {
 		assert.ok(key in properties, `${key} should be exposed`);
 	}
 	assert.equal("maxSteps" in properties, false);
@@ -272,6 +301,7 @@ test("agent_query async path passes supported options through", async () => {
 		agentId: "agent",
 		message: "hello $1",
 		jobName: "review-pass",
+		"harness-mode": "build",
 		threadId: "thread-x",
 		resourceId: "resource-x",
 		requestContext: { tenant: "acme" },
@@ -284,6 +314,7 @@ test("agent_query async path passes supported options through", async () => {
 	assert.equal(starts[0].includeReasoning, true);
 	assert.equal(starts[0].includeToolResults, true);
 	assert.equal(starts[0].jobName, "review-pass");
+	assert.equal(starts[0].harnessMode, "build");
 	assert.equal(starts[0].threadId, "thread-x");
 	assert.equal(starts[0].resourceId, "resource-x");
 	assert.equal(starts[0].timeoutMs, 123);
@@ -310,6 +341,7 @@ test("agent_query supports synchronous execution and input_args formatting", asy
 		agentId: "agent",
 		message: "Use $1",
 		synchronous: true,
+		"harness-mode": "audit",
 		requestContext: { tenant: "acme" },
 		input_args: { $1: "value" },
 	});
@@ -318,7 +350,7 @@ test("agent_query supports synchronous execution and input_args formatting", asy
 	assert.equal("text" in result.content[0] ? result.content[0].text.includes("Reasoning:" ) : true, false);
 	assert.equal(requests[0].agentId, "agent");
 	assert.match(requests[0].request.messages[0].content, /Use \$1\n\nInput arguments:\n- \$1: value/);
-	assert.deepEqual(requests[0].request.requestContext, { tenant: "acme", input_args: { $1: "value" } });
+	assert.deepEqual(requests[0].request.requestContext, { tenant: "acme", harnessMode: "audit", input_args: { $1: "value" } });
 });
 
 test("agent_query renderers distinguish async summaries and sync details", () => {

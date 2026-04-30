@@ -10,14 +10,50 @@ export const defaultSupervisorModel =
   process.env.MASTRA_SUBAGENT_MODEL ??
   process.env.MASTRA_MODEL ??
   defaultMiniMaxModel;
-export const defaultControlModel =
-  process.env.MASTRA_CONTROL_MODEL ??
-  process.env.MASTRA_AGENT_MODEL ??
-  process.env.MASTRA_SUBAGENT_MODEL ??
-  process.env.MASTRA_MODEL ??
-  defaultMiniMaxModel;
 
 const defaultToolCallConcurrency = 15;
+
+export type AgentModeMetadata = {
+  id: string;
+  name: string;
+  default?: boolean;
+};
+
+export const sharedAgentModeNames = {
+  balanced: "Balanced",
+  scope: "Scope",
+  plan: "Plan",
+  build: "Build",
+  verify: "Verify",
+  research: "Research",
+  brainstorm: "Brainstorm",
+  analysis: "Analysis",
+  test: "Test",
+  audit: "Audit",
+  debug: "Debug",
+} as const;
+
+export type SharedAgentModeId = keyof typeof sharedAgentModeNames;
+
+export type AgentModePromptMap = Partial<Record<SharedAgentModeId, string>>;
+
+export function agentModesFromPrompts(
+  modePrompts: AgentModePromptMap,
+  defaultModeId: SharedAgentModeId = "balanced",
+): AgentModeMetadata[] {
+  return Object.keys(modePrompts).map((id) => {
+    const modeId = id as SharedAgentModeId;
+    return {
+      id: modeId,
+      name: sharedAgentModeNames[modeId],
+      default: modeId === defaultModeId,
+    };
+  });
+}
+
+export const defaultAgentModes = agentModesFromPrompts({
+  balanced: "Use balanced mode.",
+});
 
 export const defaultObservationalMemoryModel =
   process.env.MASTRA_OBSERVATIONAL_MEMORY_MODEL ?? defaultAgentModel;
@@ -58,7 +94,36 @@ export const agentDefaultOptions = {
   architect: { maxSteps: 40, toolCallConcurrency: defaultToolCallConcurrency },
   developer: { maxSteps: 80, toolCallConcurrency: defaultToolCallConcurrency },
   validator: { maxSteps: 45, toolCallConcurrency: defaultToolCallConcurrency },
-  control: { maxSteps: 25, toolCallConcurrency: defaultToolCallConcurrency },
 } as const;
 
 export const streamingDefaultOptions = agentDefaultOptions.supervisor;
+
+export function composeAgentInstructions(
+  instructions: string,
+  ...promptGroups: Array<readonly string[]>
+): string {
+  const userSubmittedRuntimePrompts = promptGroups
+    .flat()
+    .filter((content) => content.trim().length > 0);
+
+  if (userSubmittedRuntimePrompts.length === 0) {
+    return instructions;
+  }
+
+  return [
+    instructions,
+    "# Runtime Policy And Tooling",
+    ...userSubmittedRuntimePrompts,
+  ].join("\n\n");
+}
+
+export function withAgentModes<TAgent extends object>(
+  agent: TAgent,
+  modes: readonly AgentModeMetadata[] = defaultAgentModes,
+): TAgent & { mode: string; modes: readonly AgentModeMetadata[] } {
+  const defaultMode = modes.find((mode) => mode.default) ?? modes[0];
+  return Object.assign(agent, {
+    mode: defaultMode?.id ?? "default",
+    modes,
+  });
+}
