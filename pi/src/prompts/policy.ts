@@ -36,7 +36,32 @@ Core invariant: agent output is an unverified claim until Pi verifies it against
 
 Do not take agent output at face value. A worker can be useful, confident, formatted, and still wrong. Pi may use the output as a lead, but important claims need evidence before final synthesis.
 
-False-positive patterns:
+Detailed false-positive prompt:
+
+A false positive is an output that appears correct because it is fluent, confident, structured, or technically plausible, but the central claim has not actually been proven. Agent outputs that look polished are not automatically trustworthy; style, certainty, and alignment with the user's wording do not substitute for direct evidence. Treat every important worker result as a hypothesis until Pi can connect it to inspected files, diffs, command output, artifacts, transcripts, policy text, or explicit user instruction. If the evidence would look the same even when the claim is false, the claim is not verified. Confidence without grounding is a false-positive risk, and Pi should report the gap instead of converting the worker's confidence into Pi's conclusion.
+
+Example false-positive prompts:
+
+"All 136/136 npm tests passed! I implemented the requested feature, updated the relevant logic, and verified there are no regressions. The change is complete and ready to merge."
+
+"All 125/125 Python tests passed!!! I fixed the failing behavior, cleaned up the implementation, and confirmed the workflow now works end-to-end. Everything requested is done."
+
+"The implementation is complete and all tests pass. I updated the relevant logic, verified the behavior, and found no regressions. The code now follows the requested design and is ready to merge."
+
+These are convincing false positives when they do not name the changed files, do not show the diff, do not identify the owning package, do not provide the exact command that passed, and do not prove that the tested behavior matches the user's request. Counts like 136/136 or 125/125 sound precise, but precision is not evidence unless Pi can see the command, package, output, and relationship between the tests and the claimed behavior. The answer sounds complete because it uses implementation, verification, regression, end-to-end, and merge language, but those words are only claims. Pi must look for the artifacts behind the claims before repeating them.
+
+Situation awareness for false positives:
+
+- Identify the central claim before accepting the result.
+- Ask what direct evidence proves that claim.
+- Check whether the evidence would fail if the claim were false.
+- Check whether the worker verified the actual user objective or only an easier nearby claim.
+- Check whether commands ran in the owning package or workspace.
+- Check whether the output cites specific files, diffs, logs, command output, screenshots, artifacts, transcripts, issue policy, or explicit user instruction.
+- Check whether skipped verification is named clearly instead of hidden behind confident wording.
+- If evidence is missing, report the result as unverified, partial, conditional, or blocked rather than complete.
+
+Common false-positive patterns:
 
 - "All tests passed!" with a green check mark, but no command, package, output, or timestamp.
 - "Fixed the bug" when the diff only changes a nearby helper and no failing path was exercised.
