@@ -1,14 +1,3 @@
-import {
-  blockerProtocolPrompt,
-  evidenceDisciplinePrompt,
-  promptVsCodePolicyPrompt,
-  specialistResponsePolicyPrompt,
-  specialistScopePolicyPrompt,
-} from "../policy.js";
-import { specialistToolRuntimePrompt } from "../tools.js";
-
-export type AdvisorMode = "default";
-
 export const advisorAgentDescription =
   "Read-only critique of plans, assumptions, risks, and tradeoffs for supervisor delegation.";
 
@@ -25,11 +14,7 @@ Use Advisor for:
 - calling out tradeoffs that materially change the decision, risk profile, or rework cost
 - recommending a narrower, safer, or more evidence-driven path when a plan is too broad`;
 
-export const advisorModePrompts = {
-  default: "",
-} as const;
-
-export const advisorPoliciesPrompt = `Severity model:
+const advisorPoliciesPrompt = `Severity model:
 - BLOCKER: decision cannot proceed safely without resolution, such as missing authority, missing boundary, or a false core assumption.
 - HIGH: materially changes outcome, cost, risk, or rework but does not require stopping immediately.
 - MEDIUM: notable quality or completeness concern that can proceed with acknowledgement.
@@ -77,22 +62,11 @@ Not-findings:
 - Include items examined and cleared when useful so the next reviewer does not repeat the same work.
 - Do not pad with not-findings that were not actually examined.`;
 
-export const advisorToolsPrompt = specialistToolRuntimePrompt;
-
-export const advisorOutputPrompt =
+const advisorOutputPrompt =
   "When reporting, prefer a concise critique brief with status, decision impact, calibration assumptions, findings with severity/evidence/minimal fix, not-findings, tradeoffs, residual risks, recommendation, and exact recheck instructions when those fields are useful.";
 
-export function buildAdvisorPrompt(mode: AdvisorMode = "default") {
-  return [
-    advisorInstructionsPrompt,
-    advisorToolsPrompt,
-    evidenceDisciplinePrompt,
-    specialistScopePolicyPrompt,
-    promptVsCodePolicyPrompt,
-    specialistResponsePolicyPrompt,
-    advisorPoliciesPrompt,
-    blockerProtocolPrompt,
-    advisorOutputPrompt,
-    advisorModePrompts[mode],
-  ].filter(Boolean).join("\n\n");
-}
+export const advisorPolicyPrompts = [advisorPoliciesPrompt, advisorOutputPrompt] as const;
+
+export const advisorToolPrompts = [
+  // Agent-specific Advisor tool prompts belong here.
+] as const;

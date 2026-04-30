@@ -19,6 +19,7 @@ import {
 	MASTRA_WORKFLOW_CALL_TOOL_NAME,
 	MASTRA_WORKFLOW_LIST_TOOL_NAME,
 	MASTRA_WORKFLOW_STATUS_TOOL_NAME,
+	REQUEST_CONTEXT_HARDNESS_MODE_KEY,
 	REQUEST_CONTEXT_MODE_ID_KEY,
 } from "../const.js";
 import { MastraAgentCard } from "../tui/index.js";
@@ -56,6 +57,7 @@ export const MASTRA_AGENT_QUERY_PARAMETERS = Type.Object({
 	message: Type.String({ description: "User message to send to the Mastra agent" }),
 	jobName: Type.Optional(Type.String({ description: "Short semantic name for this background job. Used in the Mastra thread id; omit to derive one from the prompt." })),
 	synchronous: Type.Optional(Type.Boolean({ description: "Execute synchronously and return final result. Defaults to false (async-by-default). When false, returns a job id immediately and streams progress to the Pi TUI." })),
+	hardnessMode: Type.Optional(Type.String({ description: "Mastra Harness mode id to activate for this query, such as supervisor, control, developer, or validator." })),
 	threadId: Type.Optional(Type.String({ description: "Mastra memory thread id" })),
 	resourceId: Type.Optional(Type.String({ description: "Mastra memory resource id" })),
 	requestContext: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Request-scoped context for Mastra" })),
@@ -541,6 +543,7 @@ export class MastraAsyncAgentManager {
 			jobId,
 			jobName,
 			piSessionId,
+			hardnessMode: stringField(input, "hardnessMode"),
 			threadId,
 			resourceId,
 			requestContext: recordField(input, "requestContext"),
@@ -638,6 +641,7 @@ export class MastraAsyncAgentManager {
 			jobId: job.jobId,
 			agentId: details.agentId,
 			modeId: details.modeId,
+			hardnessMode: details.hardnessMode,
 			threadId: details.threadId,
 			resourceId: details.resourceId,
 			status: details.status,
@@ -727,6 +731,7 @@ export function createMastraAgentQueryTool(
 							jobId: "",
 							agentId: params.agentId,
 							modeId: undefined,
+							hardnessMode: params.hardnessMode,
 							threadId: params.threadId ?? defaultThreadId(params.agentId),
 							resourceId: params.resourceId ?? defaultResourceId(),
 							status: "aborted",
@@ -747,6 +752,7 @@ export function createMastraAgentQueryTool(
 						agentId: params.agentId,
 						message: params.message,
 						jobName: params.jobName,
+						hardnessMode: params.hardnessMode,
 						threadId: params.threadId,
 						resourceId: params.resourceId,
 						requestContext: params.requestContext,
@@ -770,6 +776,7 @@ export function createMastraAgentQueryTool(
 				agentId: params.agentId,
 				message: params.message,
 				jobName: params.jobName,
+				hardnessMode: params.hardnessMode,
 				threadId: params.threadId,
 				resourceId: params.resourceId,
 				requestContext: params.requestContext,
@@ -1150,6 +1157,7 @@ export function normalizeInspectAgentIds(params: MastraAgentInspectInput): strin
 export function createStreamRequest(params: MastraAgentCallInput, threadId: string, resourceId: string): MastraStreamRequest {
 	const requestContext = { ...(params.requestContext ?? {}) };
 	if (params.modeId) requestContext[REQUEST_CONTEXT_MODE_ID_KEY] = params.modeId;
+	if (params.hardnessMode) requestContext[REQUEST_CONTEXT_HARDNESS_MODE_KEY] = params.hardnessMode;
 
 	const message = params.message;
 
@@ -1190,6 +1198,7 @@ export function createStreamRequest(params: MastraAgentCallInput, threadId: stri
 				activeTools: params.activeTools,
 				requestContext: Object.keys(requestContext).length > 0 ? requestContext : undefined,
 				input_args: params.input_args,
+				...(params.hardnessMode ? { hardnessMode: params.hardnessMode } : {}),
 			};
 		}
 
@@ -1203,6 +1212,7 @@ export function createStreamRequest(params: MastraAgentCallInput, threadId: stri
 		maxSteps: params.maxSteps,
 		activeTools: params.activeTools,
 		requestContext: Object.keys(requestContext).length > 0 ? requestContext : undefined,
+		...(params.hardnessMode ? { hardnessMode: params.hardnessMode } : {}),
 	};
 }
 
@@ -1227,6 +1237,7 @@ function workflowJobRequest(job: MastraAsyncAgentJob): MastraWorkflowStreamReque
 			runId: job.runId,
 			agentRunId: job.runId,
 			agentId: job.params.agentId,
+			hardnessMode: job.params.hardnessMode,
 			message: job.params.message,
 			threadId: job.details.threadId,
 			resourceId: job.details.resourceId,
@@ -1246,6 +1257,7 @@ function createInitialDetails(params: MastraAgentCallInput): MastraAgentCallDeta
 	return {
 		agentId: params.agentId,
 		modeId: params.modeId,
+		hardnessMode: params.hardnessMode,
 		prompt: params.message,
 		threadId: params.threadId ?? defaultThreadId(params.agentId),
 		resourceId,
@@ -1502,6 +1514,7 @@ function formatAsyncStartResult(summary: MastraAgentAsyncJobSummary): string {
 		summary.jobName ? `jobName: ${summary.jobName}` : undefined,
 		`agentId: ${summary.agentId}`,
 		summary.modeId ? `modeId: ${summary.modeId}` : undefined,
+		summary.hardnessMode ? `hardnessMode: ${summary.hardnessMode}` : undefined,
 		`threadId: ${summary.threadId}`,
 		`resourceId: ${summary.resourceId}`,
 		summary.runId ? `runId: ${summary.runId}` : undefined,
@@ -1532,6 +1545,7 @@ function formatAsyncJobSummary(summary: MastraAgentAsyncJobSummary): string {
 		summary.jobName ? `jobName: ${summary.jobName}` : undefined,
 		`agentId: ${summary.agentId}`,
 		summary.modeId ? `modeId: ${summary.modeId}` : undefined,
+		summary.hardnessMode ? `hardnessMode: ${summary.hardnessMode}` : undefined,
 		summary.lifecycleStatus ? `lifecycleStatus: ${summary.lifecycleStatus}` : undefined,
 		`status: ${summary.status}`,
 		summary.terminalReason ? `terminalReason: ${summary.terminalReason}` : undefined,

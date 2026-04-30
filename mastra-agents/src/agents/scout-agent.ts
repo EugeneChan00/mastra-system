@@ -1,14 +1,27 @@
 import { Agent } from "@mastra/core/agent";
 
-import { buildScoutPrompt, scoutAgentDescription } from "../prompts/index.js";
-import { agentDefaultOptions, createAgentMemory, defaultAgentModel } from "./shared.js";
+import {
+  scoutAgentDescription,
+  scoutInstructionsPrompt,
+  scoutPolicyPrompts,
+  scoutToolPrompts,
+} from "../prompts/agents/scout.js";
+import { sharedPolicyPrompts } from "../prompts/policy.js";
+import { sharedToolPrompts } from "../prompts/tools.js";
+import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
 
-export const scoutAgent = new Agent({
+export const scoutAgent = withAgentModes(new Agent({
   id: "scout-agent",
   name: "Scout Agent",
   description: scoutAgentDescription,
-  instructions: buildScoutPrompt(),
+  instructions: composeAgentInstructions(
+    scoutInstructionsPrompt,
+    sharedPolicyPrompts.specialist,
+    sharedToolPrompts.specialist,
+    scoutPolicyPrompts,
+    scoutToolPrompts,
+  ),
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.scout,
-});
+}));

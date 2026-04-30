@@ -24,6 +24,7 @@ export const DEFAULT_TOOL_EVENT_LIMIT = 100;
 export const PI_RESOURCE_PREFIX = "pi";
 export const PI_THREAD_PREFIX = "pi";
 export const REQUEST_CONTEXT_MODE_ID_KEY = "modeId";
+export const REQUEST_CONTEXT_HARDNESS_MODE_KEY = "hardnessMode";
 
 export function agentsPath(options: { partial?: boolean } = {}): string {
 	return options.partial ? "/agents?partial=true" : "/agents";

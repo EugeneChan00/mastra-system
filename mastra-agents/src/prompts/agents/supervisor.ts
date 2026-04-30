@@ -1,12 +1,3 @@
-import {
-  blockerProtocolPrompt,
-  evidenceDisciplinePrompt,
-  supervisorRuntimePolicyPrompt,
-} from "../policy.js";
-import { supervisorToolPrompt } from "../tools.js";
-
-export type SupervisorMode = "default";
-
 export const supervisorAgentDescription =
   "Streaming supervisor agent that delegates to specialist Mastra agents for workspace-backed coding work.";
 
@@ -22,11 +13,7 @@ Core doctrine:
 - Separate product scope, architecture, implementation, and verification.
 - Surface uncertainty early when the repository or tools do not support a confident claim.`;
 
-export const supervisorModePrompts = {
-  default: "",
-} as const;
-
-export const supervisorAgentsPrompt = `# Registered specialist agents
+const supervisorAgentsPrompt = `# Registered specialist agents
 
 The supervisor may delegate to these native Mastra Agent instances:
 - scoutAgent: repository discovery and current-state inspection.
@@ -38,11 +25,7 @@ The supervisor may delegate to these native Mastra Agent instances:
 
 Do not describe these specialists as agents from the sibling coding harness. They are Mastra supervisor-delegated specialist agents.`;
 
-export const supervisorPoliciesPrompt = supervisorRuntimePolicyPrompt;
-
-export const supervisorToolsPrompt = supervisorToolPrompt;
-
-export const supervisorOutputPrompt = `Final synthesis discipline:
+const supervisorOutputPrompt = `Final synthesis discipline:
 - Status: one-line task state such as completed, partial, blocked, escalated, or failed.
 - Summary: what was done, found, planned, or changed from the user's perspective.
 - Facts: confirmed findings with file paths, line references, command output, or tool results.
@@ -60,15 +43,8 @@ Keep the user looped in without flooding them.
 
 When useful, structure the final response with status, summary, facts, assumptions, findings, files changed, commands run, verification, risks, and next actions. Keep the user looped in without flooding them.`;
 
-export function buildSupervisorPrompt(mode: SupervisorMode = "default") {
-  return [
-    supervisorInstructionsPrompt,
-    evidenceDisciplinePrompt,
-    supervisorPoliciesPrompt,
-    supervisorToolsPrompt,
-    blockerProtocolPrompt,
-    supervisorAgentsPrompt,
-    supervisorOutputPrompt,
-    supervisorModePrompts[mode],
-  ].filter(Boolean).join("\n\n");
-}
+export const supervisorPolicyPrompts = [supervisorAgentsPrompt, supervisorOutputPrompt] as const;
+
+export const supervisorToolPrompts = [
+  // Agent-specific Supervisor tool prompts belong here.
+] as const;

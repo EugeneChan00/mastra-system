@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readdir } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const jiti = createJiti(import.meta.url);
 
 const prompts = await jiti.import("../src/prompts/index.ts");
+const promptModules = {
+	advisor: await jiti.import("../src/prompts/agents/advisor.ts"),
+	architect: await jiti.import("../src/prompts/agents/architect.ts"),
+	control: await jiti.import("../src/prompts/agents/control.ts"),
+	developer: await jiti.import("../src/prompts/agents/developer.ts"),
+	researcher: await jiti.import("../src/prompts/agents/researcher.ts"),
+	scout: await jiti.import("../src/prompts/agents/scout.ts"),
+	supervisor: await jiti.import("../src/prompts/agents/supervisor.ts"),
+	validator: await jiti.import("../src/prompts/agents/validator.ts"),
+};
+const agentModules = {
+	advisor: await jiti.import("../src/agents/advisor-agent.ts"),
+	architect: await jiti.import("../src/agents/architect-agent.ts"),
+	control: await jiti.import("../src/agents/control-agent.ts"),
+	developer: await jiti.import("../src/agents/developer-agent.ts"),
+	researcher: await jiti.import("../src/agents/researcher-agent.ts"),
+	scout: await jiti.import("../src/agents/scout-agent.ts"),
+	supervisor: await jiti.import("../src/agents/agent.ts"),
+	validator: await jiti.import("../src/agents/validator-agent.ts"),
+};
+const agentsIndex = await jiti.import("../src/agents/index.ts");
 
 const expectedAgentPromptFiles = [
 	"advisor.ts",
@@ -21,7 +42,18 @@ const expectedAgentPromptFiles = [
 	"validator.ts",
 ];
 
-const expectedBuilders = [
+const agentRegistrationFiles = [
+	"advisor-agent.ts",
+	"architect-agent.ts",
+	"control-agent.ts",
+	"developer-agent.ts",
+	"researcher-agent.ts",
+	"scout-agent.ts",
+	"agent.ts",
+	"validator-agent.ts",
+];
+
+const removedBuilderExports = [
 	"buildAdvisorPrompt",
 	"buildArchitectPrompt",
 	"buildControlPrompt",
@@ -30,6 +62,89 @@ const expectedBuilders = [
 	"buildScoutPrompt",
 	"buildSupervisorPrompt",
 	"buildValidatorPrompt",
+];
+
+const removedSharedFragmentExports = [
+	"evidenceDisciplinePrompt",
+	"blockerProtocolPrompt",
+	"specialistToolRuntimePrompt",
+	"supervisorToolPrompt",
+	"controlToolPrompt",
+];
+
+const agentContracts = [
+	{
+		name: "advisor",
+		agentExport: "advisorAgent",
+		instructionsExport: "advisorInstructionsPrompt",
+		policyExport: "advisorPolicyPrompts",
+		toolExport: "advisorToolPrompts",
+		agentContextNeedle: "Severity model:",
+		sharedToolNeedle: "Operate inside the tools exposed",
+	},
+	{
+		name: "architect",
+		agentExport: "architectAgent",
+		instructionsExport: "architectInstructionsPrompt",
+		policyExport: "architectPolicyPrompts",
+		toolExport: "architectToolPrompts",
+		agentContextNeedle: "Vertical-slice discipline:",
+		sharedToolNeedle: "Operate inside the tools exposed",
+	},
+	{
+		name: "control",
+		agentExport: "controlAgent",
+		instructionsExport: "controlInstructionsPrompt",
+		policyExport: "controlPolicyPrompts",
+		toolExport: "controlToolPrompts",
+		agentContextNeedle: "Memory discipline:",
+		sharedToolNeedle: "Workspace tool policy:",
+	},
+	{
+		name: "developer",
+		agentExport: "developerAgent",
+		instructionsExport: "developerInstructionsPrompt",
+		policyExport: "developerPolicyPrompts",
+		toolExport: "developerToolPrompts",
+		agentContextNeedle: "Implementation authority:",
+		sharedToolNeedle: "Operate inside the tools exposed",
+	},
+	{
+		name: "researcher",
+		agentExport: "researcherAgent",
+		instructionsExport: "researcherInstructionsPrompt",
+		policyExport: "researcherPolicyPrompts",
+		toolExport: "researcherToolPrompts",
+		agentContextNeedle: "Source hierarchy:",
+		sharedToolNeedle: "Operate inside the tools exposed",
+	},
+	{
+		name: "scout",
+		agentExport: "scoutAgent",
+		instructionsExport: "scoutInstructionsPrompt",
+		policyExport: "scoutPolicyPrompts",
+		toolExport: "scoutToolPrompts",
+		agentContextNeedle: "Boundary discipline:",
+		sharedToolNeedle: "Operate inside the tools exposed",
+	},
+	{
+		name: "supervisor",
+		agentExport: "supervisorAgent",
+		instructionsExport: "supervisorInstructionsPrompt",
+		policyExport: "supervisorPolicyPrompts",
+		toolExport: "supervisorToolPrompts",
+		agentContextNeedle: "# Registered specialist agents",
+		sharedToolNeedle: "Delegation protocol:",
+	},
+	{
+		name: "validator",
+		agentExport: "validatorAgent",
+		instructionsExport: "validatorInstructionsPrompt",
+		policyExport: "validatorPolicyPrompts",
+		toolExport: "validatorToolPrompts",
+		agentContextNeedle: "Validation setup:",
+		sharedToolNeedle: "Operate inside the tools exposed",
+	},
 ];
 
 test("prompt modules follow the issue 19 vertical layout", async () => {
@@ -44,26 +159,85 @@ test("prompt modules follow the issue 19 vertical layout", async () => {
 	await assert.rejects(access(path.join(promptsDir, "shared.ts")));
 });
 
-test("prompt index exports stable non-empty builder prompts", () => {
-	for (const builderName of expectedBuilders) {
-		const builder = prompts[builderName];
-		assert.equal(typeof builder, "function", `${builderName} should be a function`);
+test("prompt index exports grouped surfaces without builder prompts", () => {
+	for (const builderName of removedBuilderExports) {
+		assert.equal(builderName in prompts, false, `${builderName} should not be exported`);
+	}
+	for (const fragmentName of removedSharedFragmentExports) {
+		assert.equal(fragmentName in prompts, false, `${fragmentName} should not be exported individually`);
+	}
 
-		const prompt = builder();
-		assert.equal(typeof prompt, "string", `${builderName} should return a string`);
-		assert.ok(prompt.length > 500, `${builderName} prompt should include substantive guidance`);
-		assert.ok(!prompt.includes("undefined"), `${builderName} prompt should not leak undefined`);
-		assert.ok(!prompt.includes("[object Object]"), `${builderName} prompt should not stringify objects`);
-		assert.doesNotMatch(prompt, /daytona/i, `${builderName} prompt should not mention Daytona`);
-		assert.doesNotMatch(prompt, /sandbox/i, `${builderName} prompt should not mention sandbox infrastructure`);
-		assert.doesNotMatch(prompt, /control-plane/i, `${builderName} prompt should not mention control-plane infrastructure`);
+	assert.deepEqual(Object.keys(prompts.sharedPolicyPrompts).sort(), ["control", "specialist", "supervisor"]);
+	assert.deepEqual(Object.keys(prompts.sharedToolPrompts).sort(), ["control", "specialist", "supervisor"]);
+});
+
+test("agent registrations import agent prompt modules directly", async () => {
+	const agentsDir = path.join(__dirname, "../src/agents");
+
+	for (const fileName of agentRegistrationFiles) {
+		const source = await readFile(path.join(agentsDir, fileName), "utf8");
+		assert.doesNotMatch(source, /\.\.\/prompts\/index\.js/);
+		assert.match(source, /\.\.\/prompts\/agents\//);
 	}
 });
 
-test("shared prompt primitives live in named root modules", () => {
-	assert.equal(typeof prompts.evidenceDisciplinePrompt, "string");
-	assert.equal(typeof prompts.blockerProtocolPrompt, "string");
-	assert.equal(typeof prompts.specialistToolRuntimePrompt, "string");
-	assert.equal(typeof prompts.supervisorToolPrompt, "string");
-	assert.equal(typeof prompts.controlToolPrompt, "string");
+test("agent prompt modules expose instructions and grouped user prompt fragments", () => {
+	for (const contract of agentContracts) {
+		const module = promptModules[contract.name];
+		assert.equal(typeof module[contract.instructionsExport], "string");
+		assert.ok(module[contract.instructionsExport].length > 200);
+
+		assert.ok(Array.isArray(module[contract.policyExport]));
+		assert.ok(module[contract.policyExport].length > 0);
+		assert.match(module[contract.policyExport].join("\n\n"), new RegExp(escapeRegExp(contract.agentContextNeedle)));
+
+		assert.ok(Array.isArray(module[contract.toolExport]));
+		assert.equal(module[contract.toolExport].length, 0, `${contract.toolExport} should be a placeholder`);
+	}
 });
+
+test("agent registrations bake runtime policy and tooling into instructions for now", async () => {
+	for (const contract of agentContracts) {
+		const agent = agentModules[contract.name][contract.agentExport];
+		const promptModule = promptModules[contract.name];
+		const instructions = await agent.getInstructions();
+		const defaultOptions = await agent.getDefaultOptions();
+
+		assert.ok(String(instructions).startsWith(promptModule[contract.instructionsExport]));
+		assert.match(instructions, /# Runtime Policy And Tooling/);
+		assert.match(instructions, /Work from evidence\./);
+		assert.match(instructions, new RegExp(escapeRegExp(contract.sharedToolNeedle)));
+		assert.match(instructions, new RegExp(escapeRegExp(contract.agentContextNeedle)));
+		assert.equal(defaultOptions.context, undefined);
+	}
+});
+
+test("agents expose placeholder modes and Harness mode composition", () => {
+	const registeredAgents = Object.values(agentsIndex.mastraAgents);
+	assert.equal(registeredAgents.length, 8);
+
+	for (const agent of registeredAgents) {
+		assert.equal(agent.mode, "default");
+		assert.deepEqual(agent.modes, [{ id: "default", name: "Default", default: true }]);
+	}
+
+	assert.deepEqual(
+		agentsIndex.mastraAgentHarnessModes.map((mode) => mode.id),
+		["supervisor", "control", "scout", "researcher", "architect", "advisor", "developer", "validator"],
+	);
+	assert.deepEqual(
+		agentsIndex.mastraAgentHarness.listModes().map((mode) => mode.id),
+		agentsIndex.mastraAgentHarnessModes.map((mode) => mode.id),
+	);
+	assert.equal(agentsIndex.mastraAgentHarness.getState().hardnessMode, "supervisor");
+	assert.equal(agentsIndex.resolveMastraAgentHarnessModeId({ agentId: "validator-agent" }), "validator");
+	assert.equal(agentsIndex.resolveMastraAgentHarnessModeId({ hardnessMode: "developer", agentId: "validator-agent" }), "developer");
+	assert.throws(
+		() => agentsIndex.resolveMastraAgentHarnessModeId({ hardnessMode: "unknown" }),
+		/Unknown hardnessMode/,
+	);
+});
+
+function escapeRegExp(value) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

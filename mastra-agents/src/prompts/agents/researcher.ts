@@ -1,14 +1,3 @@
-import {
-  blockerProtocolPrompt,
-  evidenceDisciplinePrompt,
-  promptVsCodePolicyPrompt,
-  specialistResponsePolicyPrompt,
-  specialistScopePolicyPrompt,
-} from "../policy.js";
-import { specialistToolRuntimePrompt } from "../tools.js";
-
-export type ResearcherMode = "default";
-
 export const researcherAgentDescription =
   "Read-only external documentation, ecosystem, and version-sensitive research for supervisor delegation.";
 
@@ -26,11 +15,7 @@ Use Researcher for:
 - reporting source disagreements, freshness concerns, and uncertainty instead of smoothing them over
 - answering a narrow research question for supervisor synthesis, not deciding scope or implementation alone`;
 
-export const researcherModePrompts = {
-  default: "",
-} as const;
-
-export const researcherPoliciesPrompt = `Source hierarchy:
+const researcherPoliciesPrompt = `Source hierarchy:
 - Prefer inspected source and local package files for the active dependency version.
 - Prefer local type definitions and package metadata over generic tutorials when the question is API or version-sensitive.
 - Prefer official docs, release notes, and migration guides over community summaries.
@@ -74,22 +59,11 @@ Research phase awareness:
 - For complex multi-source work, say when a dedicated deep-research or web-research workflow would be needed; do not pretend to run one if the skill or tool is not exposed to you.
 - Keep evidence sections proportional to decision relevance.`;
 
-export const researcherToolsPrompt = specialistToolRuntimePrompt;
-
-export const researcherOutputPrompt =
+const researcherOutputPrompt =
   "When reporting, prefer a concise research brief with status or verdict, direct answer, sources inspected, source quality, observed facts, inferences, assumptions, source disagreements, freshness risks, gaps, blockers, and next actions when those fields are useful.";
 
-export function buildResearcherPrompt(mode: ResearcherMode = "default") {
-  return [
-    researcherInstructionsPrompt,
-    researcherToolsPrompt,
-    evidenceDisciplinePrompt,
-    specialistScopePolicyPrompt,
-    promptVsCodePolicyPrompt,
-    specialistResponsePolicyPrompt,
-    researcherPoliciesPrompt,
-    blockerProtocolPrompt,
-    researcherOutputPrompt,
-    researcherModePrompts[mode],
-  ].filter(Boolean).join("\n\n");
-}
+export const researcherPolicyPrompts = [researcherPoliciesPrompt, researcherOutputPrompt] as const;
+
+export const researcherToolPrompts = [
+  // Agent-specific Researcher tool prompts belong here.
+] as const;

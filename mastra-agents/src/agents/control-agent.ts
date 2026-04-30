@@ -2,10 +2,23 @@ import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { PostgresStore } from "@mastra/pg";
 
-import { buildControlPrompt, controlAgentDescription } from "../prompts/index.js";
+import {
+  controlAgentDescription,
+  controlInstructionsPrompt,
+  controlPolicyPrompts,
+  controlToolPrompts,
+} from "../prompts/agents/control.js";
+import { sharedPolicyPrompts } from "../prompts/policy.js";
+import { sharedToolPrompts } from "../prompts/tools.js";
 import { controlAgentScorerConfig } from "../scorers/control-agent.js";
 import { workspaceTools } from "../tools/workspace.js";
-import { agentDefaultOptions, defaultControlModel, defaultObservationalMemoryOptions } from "./shared.js";
+import {
+  agentDefaultOptions,
+  composeAgentInstructions,
+  defaultControlModel,
+  defaultObservationalMemoryOptions,
+  withAgentModes,
+} from "./shared.js";
 
 const storage = new PostgresStore({
   id: "mastra-control-agent-memory",
@@ -14,11 +27,17 @@ const storage = new PostgresStore({
     "postgresql://mastra:mastra@mastra-postgres:5432/mastra",
 });
 
-export const controlAgent = new Agent({
+export const controlAgent = withAgentModes(new Agent({
   id: "control-agent",
   name: "Control Agent",
   description: controlAgentDescription,
-  instructions: buildControlPrompt(),
+  instructions: composeAgentInstructions(
+    controlInstructionsPrompt,
+    sharedPolicyPrompts.control,
+    sharedToolPrompts.control,
+    controlPolicyPrompts,
+    controlToolPrompts,
+  ),
   model: defaultControlModel,
   defaultOptions: agentDefaultOptions.control,
   memory: new Memory({
@@ -41,4 +60,4 @@ export const controlAgent = new Agent({
     write_file: workspaceTools.writeFile,
     edit_file: workspaceTools.replaceInFile,
   },
-});
+}));

@@ -12,6 +12,7 @@ export interface MastraAgentCallInput {
 	message: string;
 	jobName?: string;
 	modeId?: string;
+	hardnessMode?: string;
 	threadId?: string;
 	resourceId?: string;
 	maxSteps?: number;
@@ -97,6 +98,7 @@ export interface MastraStreamRequest {
 	activeTools?: string[];
 	requestContext?: Record<string, unknown>;
 	input_args?: MastraAgentInputArgs;
+	hardnessMode?: string;
 }
 
 export interface MastraWorkflowStepInfo {
@@ -225,6 +227,7 @@ export interface MastraUsage {
 export interface MastraAgentCallDetails {
 	agentId: string;
 	modeId?: string;
+	hardnessMode?: string;
 	prompt?: string;
 	threadId: string;
 	resourceId: string;
@@ -255,6 +258,7 @@ export interface MastraAgentQueryInput {
 	message: string;
 	jobName?: string;
 	synchronous?: boolean;
+	hardnessMode?: string;
 	threadId?: string;
 	resourceId?: string;
 	requestContext?: Record<string, unknown>;
@@ -284,6 +288,7 @@ export interface MastraAgentAsyncJobSummary {
 	jobName?: string;
 	agentId: string;
 	modeId?: string;
+	hardnessMode?: string;
 	threadId: string;
 	resourceId: string;
 	piSessionId?: string;

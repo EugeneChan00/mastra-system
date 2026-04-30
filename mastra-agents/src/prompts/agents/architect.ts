@@ -1,14 +1,3 @@
-import {
-  blockerProtocolPrompt,
-  evidenceDisciplinePrompt,
-  promptVsCodePolicyPrompt,
-  specialistResponsePolicyPrompt,
-  specialistScopePolicyPrompt,
-} from "../policy.js";
-import { specialistToolRuntimePrompt } from "../tools.js";
-
-export type ArchitectMode = "default";
-
 export const architectAgentDescription =
   "Read-only boundary, contract, state ownership, and integration design for supervisor delegation.";
 
@@ -26,11 +15,7 @@ Use Architect for:
 - mapping explicit state ownership, control flow, data flow, event flow, and integration seams across the proposed boundary
 - defining handoff notes that Developer and Validator can use without guessing`;
 
-export const architectModePrompts = {
-  default: "",
-} as const;
-
-export const architectPoliciesPrompt = `Vertical-slice discipline:
+const architectPoliciesPrompt = `Vertical-slice discipline:
 - Design the next architecture delta, not the future system.
 - Prefer one deeper module, one cleaner boundary, or one clearer state owner over broad scaffolding across many files.
 - Treat integration as part of the current slice when the slice depends on a boundary crossing.
@@ -76,22 +61,11 @@ Non-goals:
 - Do not broaden the slice to justify an abstraction.
 - Do not hide uncertainty behind architecture vocabulary.`;
 
-export const architectToolsPrompt = specialistToolRuntimePrompt;
-
-export const architectOutputPrompt =
+const architectOutputPrompt =
   "When reporting, prefer a concise architecture brief with status, summary, current structure, proposed boundary, ownership model, contracts, invariants, integration seams, non-goals, risks, verification targets, and handoff notes when those fields are useful.";
 
-export function buildArchitectPrompt(mode: ArchitectMode = "default") {
-  return [
-    architectInstructionsPrompt,
-    architectToolsPrompt,
-    evidenceDisciplinePrompt,
-    specialistScopePolicyPrompt,
-    promptVsCodePolicyPrompt,
-    specialistResponsePolicyPrompt,
-    architectPoliciesPrompt,
-    blockerProtocolPrompt,
-    architectOutputPrompt,
-    architectModePrompts[mode],
-  ].filter(Boolean).join("\n\n");
-}
+export const architectPolicyPrompts = [architectPoliciesPrompt, architectOutputPrompt] as const;
+
+export const architectToolPrompts = [
+  // Agent-specific Architect tool prompts belong here.
+] as const;

@@ -1,14 +1,3 @@
-import {
-  blockerProtocolPrompt,
-  evidenceDisciplinePrompt,
-  promptVsCodePolicyPrompt,
-  specialistResponsePolicyPrompt,
-  specialistScopePolicyPrompt,
-} from "../policy.js";
-import { specialistToolRuntimePrompt } from "../tools.js";
-
-export type DeveloperMode = "default";
-
 export const developerAgentDescription =
   "Focused implementation support for clearly bounded build tasks delegated by a supervisor.";
 
@@ -25,11 +14,7 @@ Use Developer for:
 - preserving unrelated worktree changes while producing integrated behavior
 - running the smallest meaningful verification that exercises the central claim`;
 
-export const developerModePrompts = {
-  default: "",
-} as const;
-
-export const developerPoliciesPrompt = `Implementation authority:
+const developerPoliciesPrompt = `Implementation authority:
 - Once the supervisor provides an explicit write boundary and central behavior, proceed with scope-consistent mutations inside that boundary.
 - Do not re-request permission for edits that are clearly inside the approved boundary.
 - Stop before editing when the task lacks a boundary, central behavior, required context, or authority.
@@ -79,22 +64,11 @@ Adversarial self-check before reporting:
 - Ask whether the change creates architecture drift, contract drift, or hidden scope expansion.
 - If verification is weak, name the gap and the next smallest check that would close it.`;
 
-export const developerToolsPrompt = specialistToolRuntimePrompt;
-
-export const developerOutputPrompt =
+const developerOutputPrompt =
   "When reporting, prefer a concise build brief with status, summary, confirmed write boundary, files changed, contracts preserved or changed, commands run with results, integration evidence, verification gaps, risks, blockers, and next actions when those fields are useful.";
 
-export function buildDeveloperPrompt(mode: DeveloperMode = "default") {
-  return [
-    developerInstructionsPrompt,
-    developerToolsPrompt,
-    evidenceDisciplinePrompt,
-    specialistScopePolicyPrompt,
-    promptVsCodePolicyPrompt,
-    specialistResponsePolicyPrompt,
-    developerPoliciesPrompt,
-    blockerProtocolPrompt,
-    developerOutputPrompt,
-    developerModePrompts[mode],
-  ].filter(Boolean).join("\n\n");
-}
+export const developerPolicyPrompts = [developerPoliciesPrompt, developerOutputPrompt] as const;
+
+export const developerToolPrompts = [
+  // Agent-specific Developer tool prompts belong here.
+] as const;

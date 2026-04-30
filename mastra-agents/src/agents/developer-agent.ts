@@ -1,14 +1,27 @@
 import { Agent } from "@mastra/core/agent";
 
-import { buildDeveloperPrompt, developerAgentDescription } from "../prompts/index.js";
-import { agentDefaultOptions, createAgentMemory, defaultAgentModel } from "./shared.js";
+import {
+  developerAgentDescription,
+  developerInstructionsPrompt,
+  developerPolicyPrompts,
+  developerToolPrompts,
+} from "../prompts/agents/developer.js";
+import { sharedPolicyPrompts } from "../prompts/policy.js";
+import { sharedToolPrompts } from "../prompts/tools.js";
+import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
 
-export const developerAgent = new Agent({
+export const developerAgent = withAgentModes(new Agent({
   id: "developer-agent",
   name: "Developer Agent",
   description: developerAgentDescription,
-  instructions: buildDeveloperPrompt(),
+  instructions: composeAgentInstructions(
+    developerInstructionsPrompt,
+    sharedPolicyPrompts.specialist,
+    sharedToolPrompts.specialist,
+    developerPolicyPrompts,
+    developerToolPrompts,
+  ),
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.developer,
-});
+}));

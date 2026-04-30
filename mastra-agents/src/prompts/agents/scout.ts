@@ -1,14 +1,3 @@
-import {
-  blockerProtocolPrompt,
-  evidenceDisciplinePrompt,
-  promptVsCodePolicyPrompt,
-  specialistResponsePolicyPrompt,
-  specialistScopePolicyPrompt,
-} from "../policy.js";
-import { specialistToolRuntimePrompt } from "../tools.js";
-
-export type ScoutMode = "default";
-
 export const scoutAgentDescription =
   "Read-only repository discovery and current-state inspection for supervisor delegation.";
 
@@ -26,11 +15,7 @@ Use Scout for:
 - collecting concrete file paths, symbols, line references, and current-state evidence for another agent
 - finding the next smallest inspection that would reduce uncertainty`;
 
-export const scoutModePrompts = {
-  default: "",
-} as const;
-
-export const scoutPoliciesPrompt = `Boundary discipline:
+const scoutPoliciesPrompt = `Boundary discipline:
 - Stay read-only: no file writes, no config mutations, no scaffold generation, no plan rewrites, no code edits, and no ownership of implementation.
 - Use discovery-oriented operations only: list, find, grep/search, stat, read, and symbol inspection when tools expose them.
 - Do not run build, test, install, generate, scaffold, migration, or formatter commands unless the supervisor explicitly authorizes state-changing evidence collection.
@@ -61,22 +46,11 @@ Anti-goals:
 - Do not treat missing search results as proof of absence unless the search scope was adequate.
 - Do not recommend implementation details beyond what inspected evidence supports.`;
 
-export const scoutToolsPrompt = specialistToolRuntimePrompt;
-
-export const scoutOutputPrompt =
+const scoutOutputPrompt =
   "When reporting, prefer a concise discovery brief with status, summary, inspected evidence, observed facts, inferences, relevant files, unknowns, blockers, routing guidance, and next actions when those fields are useful.";
 
-export function buildScoutPrompt(mode: ScoutMode = "default") {
-  return [
-    scoutInstructionsPrompt,
-    scoutToolsPrompt,
-    evidenceDisciplinePrompt,
-    specialistScopePolicyPrompt,
-    promptVsCodePolicyPrompt,
-    specialistResponsePolicyPrompt,
-    scoutPoliciesPrompt,
-    blockerProtocolPrompt,
-    scoutOutputPrompt,
-    scoutModePrompts[mode],
-  ].filter(Boolean).join("\n\n");
-}
+export const scoutPolicyPrompts = [scoutPoliciesPrompt, scoutOutputPrompt] as const;
+
+export const scoutToolPrompts = [
+  // Agent-specific Scout tool prompts belong here.
+] as const;

@@ -1,14 +1,27 @@
 import { Agent } from "@mastra/core/agent";
 
-import { buildValidatorPrompt, validatorAgentDescription } from "../prompts/index.js";
-import { agentDefaultOptions, createAgentMemory, defaultAgentModel } from "./shared.js";
+import {
+  validatorAgentDescription,
+  validatorInstructionsPrompt,
+  validatorPolicyPrompts,
+  validatorToolPrompts,
+} from "../prompts/agents/validator.js";
+import { sharedPolicyPrompts } from "../prompts/policy.js";
+import { sharedToolPrompts } from "../prompts/tools.js";
+import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
 
-export const validatorAgent = new Agent({
+export const validatorAgent = withAgentModes(new Agent({
   id: "validator-agent",
   name: "Validator Agent",
   description: validatorAgentDescription,
-  instructions: buildValidatorPrompt(),
+  instructions: composeAgentInstructions(
+    validatorInstructionsPrompt,
+    sharedPolicyPrompts.specialist,
+    sharedToolPrompts.specialist,
+    validatorPolicyPrompts,
+    validatorToolPrompts,
+  ),
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.validator,
-});
+}));

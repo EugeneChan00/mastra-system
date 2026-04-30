@@ -7,5 +7,13 @@ export { architectAgent } from "./architect-agent.js";
 export { advisorAgent } from "./advisor-agent.js";
 export { developerAgent } from "./developer-agent.js";
 export { validatorAgent } from "./validator-agent.js";
+export {
+  createMastraAgentHarness,
+  defaultMastraAgentHarnessModeId,
+  isMastraAgentHarnessModeId,
+  mastraAgentHarness,
+  mastraAgentHarnessModes,
+  resolveMastraAgentHarnessModeId,
+} from "./harness.js";
 export * from "./shared.js";
 export * from "../prompts/index.js";

@@ -19,6 +19,16 @@ export const defaultControlModel =
 
 const defaultToolCallConcurrency = 15;
 
+export type AgentModeMetadata = {
+  id: string;
+  name: string;
+  default?: boolean;
+};
+
+export const defaultAgentModes = [
+  { id: "default", name: "Default", default: true },
+] as const satisfies readonly AgentModeMetadata[];
+
 export const defaultObservationalMemoryModel =
   process.env.MASTRA_OBSERVATIONAL_MEMORY_MODEL ?? defaultAgentModel;
 
@@ -62,3 +72,33 @@ export const agentDefaultOptions = {
 } as const;
 
 export const streamingDefaultOptions = agentDefaultOptions.supervisor;
+
+export function composeAgentInstructions(
+  instructions: string,
+  ...promptGroups: Array<readonly string[]>
+): string {
+  const userSubmittedRuntimePrompts = promptGroups
+    .flat()
+    .filter((content) => content.trim().length > 0);
+
+  if (userSubmittedRuntimePrompts.length === 0) {
+    return instructions;
+  }
+
+  return [
+    instructions,
+    "# Runtime Policy And Tooling",
+    ...userSubmittedRuntimePrompts,
+  ].join("\n\n");
+}
+
+export function withAgentModes<TAgent extends object>(
+  agent: TAgent,
+  modes: readonly AgentModeMetadata[] = defaultAgentModes,
+): TAgent & { mode: string; modes: readonly AgentModeMetadata[] } {
+  const defaultMode = modes.find((mode) => mode.default) ?? modes[0];
+  return Object.assign(agent, {
+    mode: defaultMode?.id ?? "default",
+    modes,
+  });
+}

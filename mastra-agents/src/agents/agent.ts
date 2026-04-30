@@ -1,6 +1,13 @@
 import { Agent } from "@mastra/core/agent";
 
-import { buildSupervisorPrompt, supervisorAgentDescription } from "../prompts/index.js";
+import {
+  supervisorAgentDescription,
+  supervisorInstructionsPrompt,
+  supervisorPolicyPrompts,
+  supervisorToolPrompts,
+} from "../prompts/agents/supervisor.js";
+import { sharedPolicyPrompts } from "../prompts/policy.js";
+import { sharedToolPrompts } from "../prompts/tools.js";
 import { workspaceTools } from "../tools/workspace.js";
 import { advisorAgent } from "./advisor-agent.js";
 import { architectAgent } from "./architect-agent.js";
@@ -8,14 +15,20 @@ import { controlAgent } from "./control-agent.js";
 import { developerAgent } from "./developer-agent.js";
 import { researcherAgent } from "./researcher-agent.js";
 import { scoutAgent } from "./scout-agent.js";
-import { agentDefaultOptions, createAgentMemory, defaultSupervisorModel } from "./shared.js";
+import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultSupervisorModel, withAgentModes } from "./shared.js";
 import { validatorAgent } from "./validator-agent.js";
 
-export const supervisorAgent = new Agent({
+export const supervisorAgent = withAgentModes(new Agent({
   id: "supervisor-agent",
   name: "Mastra System Supervisor",
   description: supervisorAgentDescription,
-  instructions: buildSupervisorPrompt(),
+  instructions: composeAgentInstructions(
+    supervisorInstructionsPrompt,
+    sharedPolicyPrompts.supervisor,
+    sharedToolPrompts.supervisor,
+    supervisorPolicyPrompts,
+    supervisorToolPrompts,
+  ),
   model: defaultSupervisorModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.supervisor,
@@ -33,7 +46,7 @@ export const supervisorAgent = new Agent({
     write_file: workspaceTools.writeFile,
     edit_file: workspaceTools.replaceInFile,
   },
-});
+}));
 
 export const mastraAgents = {
   supervisorAgent,

@@ -22,24 +22,17 @@ test("pi agent job workflow step streams agent output into artifacts and forward
 		const { runPiAgentJobStep } = await jiti.import("../src/workflows/pi-agent-job.ts");
 		const writerChunks = [];
 		let streamPrompt = "";
-		let streamOptions;
-		const mastra = {
-			getAgentById(agentId) {
-				assert.equal(agentId, "validator-agent");
-				return {
-					async stream(prompt, options) {
-						streamPrompt = prompt;
-						streamOptions = options;
-						return {
-							fullStream: [
-								{ type: "text-delta", text: "hello" },
-								{ type: "text-delta", payload: { text: " world" } },
-							],
-						};
-					},
-				};
+		let streamRequestContext;
+		const harness = createFakeHarness({
+			currentModeId: "supervisor",
+			async sendMessage({ content, requestContext }) {
+				streamPrompt = content;
+				streamRequestContext = requestContext;
+				this.emit({ type: "message_update", message: { content: [{ type: "text", text: "hello" }] } });
+				this.emit({ type: "message_update", message: { content: [{ type: "text", text: "hello world" }] } });
 			},
-		};
+		});
+		const mastra = { mastraAgentHarness: harness };
 		const writer = {
 			async write(chunk) {
 				writerChunks.push(chunk);
@@ -54,6 +47,7 @@ test("pi agent job workflow step streams agent output into artifacts and forward
 				runId: "workflow-run",
 				agentRunId: "agent-run",
 				agentId: "validator-agent",
+				hardnessMode: "validator",
 				message: "Review $1",
 				threadId: "thread-1",
 				resourceId: "resource-1",
@@ -69,18 +63,24 @@ test("pi agent job workflow step streams agent output into artifacts and forward
 		assert.equal(result.text, "hello world");
 		assert.equal(result.runId, "workflow-run");
 		assert.equal(result.agentRunId, "agent-run");
-		assert.equal(streamOptions.runId, "agent-run");
-		assert.deepEqual(streamOptions.memory, { thread: "thread-1", resource: "resource-1" });
-		assert.deepEqual(streamOptions.requestContext, { tenant: "acme", input_args: { $1: "diff" } });
+		assert.equal(result.hardnessMode, "validator");
+		assert.equal(harness.resourceId, "resource-1");
+		assert.equal(harness.threadId, "thread-1");
+		assert.equal(harness.modeId, "validator");
+		assert.deepEqual(harness.state, { hardnessMode: "validator" });
+		assert.equal(streamRequestContext.get("tenant"), "acme");
+		assert.deepEqual(streamRequestContext.get("input_args"), { $1: "diff" });
+		assert.equal(streamRequestContext.get("hardnessMode"), "validator");
 		assert.match(streamPrompt, /Review \$1/);
 		assert.match(streamPrompt, /- \$1: diff/);
 		assert.deepEqual(writerChunks, [
 			{ type: "text-delta", text: "hello" },
-			{ type: "text-delta", payload: { text: " world" } },
+			{ type: "text-delta", text: " world" },
+			{ type: "finish", payload: { hardnessMode: "validator" } },
 		]);
 		assert.equal(await readFile(result.artifactPath, "utf8"), "hello world");
 		const events = (await readFile(result.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-		assert.equal(events.length, 2);
+		assert.equal(events.length, 3);
 		assert.deepEqual(events.map((event) => event.chunk), writerChunks);
 	} finally {
 		if (previousArtifactDir === undefined) delete process.env.MASTRA_PI_AGENT_JOB_DIR;
@@ -97,13 +97,11 @@ test("pi agent job workflow step reports agent stream errors and writes error ar
 		const { runPiAgentJobStep } = await jiti.import("../src/workflows/pi-agent-job.ts");
 		const writerChunks = [];
 		const mastra = {
-			getAgentById() {
-				return {
-					async stream() {
-						throw new Error("agent exploded");
-					},
-				};
-			},
+			mastraAgentHarness: createFakeHarness({
+				async sendMessage() {
+					throw new Error("agent exploded");
+				},
+			}),
 		};
 		const writer = {
 			async write(chunk) {
@@ -139,3 +137,46 @@ test("pi agent job workflow step reports agent stream errors and writes error ar
 		await rm(artifactDir, { recursive: true, force: true });
 	}
 });
+
+function createFakeHarness(overrides = {}) {
+	const listeners = [];
+	return {
+		resourceId: undefined,
+		threadId: undefined,
+		modeId: overrides.currentModeId ?? "supervisor",
+		state: { hardnessMode: overrides.currentModeId ?? "supervisor" },
+		subscribe(listener) {
+			listeners.push(listener);
+			return () => {
+				const index = listeners.indexOf(listener);
+				if (index >= 0) listeners.splice(index, 1);
+			};
+		},
+		emit(event) {
+			for (const listener of [...listeners]) listener(event);
+		},
+		async init() {},
+		setResourceId({ resourceId }) {
+			this.resourceId = resourceId;
+		},
+		async switchThread({ threadId }) {
+			this.threadId = threadId;
+		},
+		getCurrentModeId() {
+			return this.modeId;
+		},
+		async switchMode({ modeId }) {
+			const previousModeId = this.modeId;
+			this.modeId = modeId;
+			this.emit({ type: "mode_changed", modeId, previousModeId });
+		},
+		async setState(updates) {
+			this.state = { ...this.state, ...updates };
+			this.emit({ type: "state_changed", state: this.state, changedKeys: Object.keys(updates) });
+		},
+		abort() {
+			this.aborted = true;
+		},
+		sendMessage: overrides.sendMessage ?? (async function () {}),
+	};
+}

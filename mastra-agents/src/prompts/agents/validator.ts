@@ -1,14 +1,3 @@
-import {
-  blockerProtocolPrompt,
-  evidenceDisciplinePrompt,
-  promptVsCodePolicyPrompt,
-  specialistResponsePolicyPrompt,
-  specialistScopePolicyPrompt,
-} from "../policy.js";
-import { specialistToolRuntimePrompt } from "../tools.js";
-
-export type ValidatorMode = "default";
-
 export const validatorAgentDescription =
   "Read-only validation of diffs, tests, contracts, and evidence for supervisor delegation.";
 
@@ -25,11 +14,7 @@ Use Validator for:
 - looking for false positives, weak oracles, mocked-away integration, missing tests, and architecture drift
 - deciding whether the artifact should pass, conditionally pass, fail, or be blocked`;
 
-export const validatorModePrompts = {
-  default: "",
-} as const;
-
-export const validatorPoliciesPrompt = `Validation setup:
+const validatorPoliciesPrompt = `Validation setup:
 - Identify the exact claim under review before judging evidence.
 - Identify the stage-relative standard: scoping artifact, architecture plan, implementation diff, evidence package, or release candidate.
 - Identify the central behavior, write boundary, public contracts, and evidence expected for this stage.
@@ -86,22 +71,11 @@ Remediation and recheck:
 - For each recheck, name what to run or inspect and what pass vs fail would look like.
 - If remediation would expand scope, say so and route back to the supervisor.`;
 
-export const validatorToolsPrompt = specialistToolRuntimePrompt;
-
-export const validatorOutputPrompt =
+const validatorOutputPrompt =
   "When reporting, prefer a concise validation brief with claim, status, decision, findings, evidence, evidence sufficiency, oracle quality, integration reality, verification gaps, contract or architecture drift, residual risk, remediation, and recheck instructions when those fields are useful.";
 
-export function buildValidatorPrompt(mode: ValidatorMode = "default") {
-  return [
-    validatorInstructionsPrompt,
-    validatorToolsPrompt,
-    evidenceDisciplinePrompt,
-    specialistScopePolicyPrompt,
-    promptVsCodePolicyPrompt,
-    specialistResponsePolicyPrompt,
-    validatorPoliciesPrompt,
-    blockerProtocolPrompt,
-    validatorOutputPrompt,
-    validatorModePrompts[mode],
-  ].filter(Boolean).join("\n\n");
-}
+export const validatorPolicyPrompts = [validatorPoliciesPrompt, validatorOutputPrompt] as const;
+
+export const validatorToolPrompts = [
+  // Agent-specific Validator tool prompts belong here.
+] as const;
