@@ -140,7 +140,7 @@ test("before_agent_start injects startup and changed mode context without mutati
 	const startupMessage = firstMessages.find((message) => message.customType === PI_AGENT_STARTUP_CONTEXT_MESSAGE_TYPE);
 	const modeMessage = firstMessages.find((message) => message.customType === PI_HARNESS_MODE_MESSAGE_TYPE);
 	assert.equal(startupMessage.display, false);
-	assert.match(startupMessage.content, /Tooling decision matrix/);
+	assert.match(startupMessage.content, /Agents as tools/);
 	assert.match(startupMessage.content, /Environment execution policy/);
 	assert.equal(modeMessage.display, false);
 	assert.match(modeMessage.content, /\[HARNESS MODE: BALANCED\]/);
