@@ -99,8 +99,8 @@ test("Pi agent resource loader uses SDK system prompt override", async (t) => {
 test("tooling prompt composes agents-as-tools and roles guidance", () => {
 	assert.match(PI_AGENT_AS_TOOL_PROMPT, /Agents as tools/);
 	assert.match(PI_AGENT_AS_TOOL_PROMPT, /input_args/);
-	assert.match(PI_AGENT_ROLES_PROMPT, /Scout handles local repository/);
-	assert.match(PI_AGENT_ROLES_PROMPT, /Validator handles evidence-based validation/);
+	assert.match(PI_AGENT_ROLES_PROMPT, /<agent> Scout <\/agent> handles local repository/);
+	assert.match(PI_AGENT_ROLES_PROMPT, /<agent> Validator <\/agent> handles evidence-based validation/);
 	assert.ok(PI_AGENT_TOOLING_PROMPT.includes(PI_AGENT_AS_TOOL_PROMPT));
 	assert.ok(PI_AGENT_TOOLING_PROMPT.includes(PI_AGENT_ROLES_PROMPT));
 });
