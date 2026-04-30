@@ -1,3 +1,5 @@
+import { PI_AGENT_TOOLING_PROMPT } from "./tools.js";
+
 export const PI_AGENT_ENV_EXECUTION_POLICY = `Environment execution policy:
 - Treat the active workspace as the source of truth for repo state.
 - Prefer read-only inspection before mutation.
@@ -41,3 +43,22 @@ export const PI_AGENT_POLICY_CONTENT = {
 } as const;
 
 export const PI_AGENT_POLICY_PROMPT = Object.values(PI_AGENT_POLICY_CONTENT).join("\n\n");
+
+export const PI_AGENT_STARTUP_CONTEXT_MESSAGE_TYPE = "pi-agent-startup-context";
+
+export const PI_AGENT_STARTUP_CONTEXT_PROMPT = [
+	PI_AGENT_TOOLING_PROMPT,
+	PI_AGENT_POLICY_PROMPT,
+].join("\n\n");
+
+export function createPiAgentStartupContextMessage(): {
+	customType: typeof PI_AGENT_STARTUP_CONTEXT_MESSAGE_TYPE;
+	content: string;
+	display: false;
+} {
+	return {
+		customType: PI_AGENT_STARTUP_CONTEXT_MESSAGE_TYPE,
+		content: PI_AGENT_STARTUP_CONTEXT_PROMPT,
+		display: false,
+	};
+}

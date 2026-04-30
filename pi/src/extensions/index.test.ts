@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MASTRA_AGENT_QUERY_TOOL_NAME, MASTRA_AGENT_RESULT_MESSAGE_TYPE, MASTRA_PI_AGENT_JOB_WORKFLOW_ID, MASTRA_STATUS_KEY } from "../const.js";
+import { PI_HARNESS_MODE_MESSAGE_TYPE } from "../harness/mode.js";
 import type { MastraAgentAsyncJobSummary } from "../mastra/index.js";
+import { PI_AGENT_STARTUP_CONTEXT_MESSAGE_TYPE } from "../prompts/index.js";
 import mastraPiExtension, { completionJobIdFromMessageEnd, formatAsyncAgentCompletion, hasCompletionReminder } from "./index.js";
 
 const stubTheme: Record<string, (...args: string[]) => string> = {
@@ -9,6 +11,35 @@ const stubTheme: Record<string, (...args: string[]) => string> = {
 	bold: (text: string) => text,
 	dim: (text: string) => text,
 };
+
+type TestExtensionHandler = (...args: any[]) => unknown;
+type TestExtensionHandlers = Map<string, TestExtensionHandler[]>;
+
+function addTestHandler(handlers: TestExtensionHandlers, event: string, handler: TestExtensionHandler): void {
+	const eventHandlers = handlers.get(event) ?? [];
+	eventHandlers.push(handler);
+	handlers.set(event, eventHandlers);
+}
+
+function firstTestHandler(handlers: TestExtensionHandlers, event: string): TestExtensionHandler | undefined {
+	return handlers.get(event)?.[0];
+}
+
+async function emitBeforeAgentStart(handlers: TestExtensionHandlers): Promise<any[]> {
+	const results: any[] = [];
+	for (const handler of handlers.get("before_agent_start") ?? []) {
+		const result = await handler(
+			{ prompt: "visible user prompt", systemPrompt: "base system prompt", systemPromptOptions: {} },
+			{},
+		);
+		if (result) results.push(result);
+	}
+	return results;
+}
+
+function messagesFromBeforeAgentStartResults(results: any[]): any[] {
+	return results.flatMap((result) => (result.message ? [result.message] : []));
+}
 
 test("formatAsyncAgentCompletion emits a system reminder with queued lifecycle and artifact chaining hint", () => {
 	const text = formatAsyncAgentCompletion(fakeSummary({
@@ -80,36 +111,52 @@ test("hasCompletionReminder matches persisted custom completion entries by job i
 	assert.equal(hasCompletionReminder(entries, "job-2"), true);
 });
 
-test("before_agent_start injects hidden harness mode context without mutating system prompt", async () => {
-	const handlers = new Map<string, (...args: any[]) => unknown>();
+test("before_agent_start injects startup and changed mode context without mutating system prompt", async () => {
+	const handlers: TestExtensionHandlers = new Map();
+	const customEntries: Array<{ customType: string; data: unknown }> = [];
 	const pi = {
 		registerTool() {},
 		registerMessageRenderer() {},
 		registerCommand() {},
 		registerShortcut() {},
 		on(event: string, handler: (...args: any[]) => unknown) {
-			handlers.set(event, handler);
+			addTestHandler(handlers, event, handler);
 		},
 		sendMessage() {},
+		appendEntry(customType: string, data: unknown) {
+			customEntries.push({ customType, data });
+		},
 	};
 	mastraPiExtension(pi as any);
 
-	const beforeAgentStart = handlers.get("before_agent_start");
-	assert.equal(typeof beforeAgentStart, "function");
-	const result = (await beforeAgentStart?.(
-		{ prompt: "visible user prompt", systemPrompt: "base system prompt", systemPromptOptions: {} },
-		{},
-	)) as any;
+	const firstResults = await emitBeforeAgentStart(handlers);
+	assert.ok(firstResults.length >= 2);
+	assert.equal(firstResults.some((result) => result.systemPrompt !== undefined), false);
 
-	assert.equal(result.systemPrompt, undefined);
-	assert.equal(result.message.customType, "mastra-harness-mode");
-	assert.equal(result.message.display, false);
-	assert.match(result.message.content, /\[HARNESS MODE: BALANCED\]/);
+	const firstMessages = messagesFromBeforeAgentStartResults(firstResults);
+	const startupMessage = firstMessages.find((message) => message.customType === PI_AGENT_STARTUP_CONTEXT_MESSAGE_TYPE);
+	const modeMessage = firstMessages.find((message) => message.customType === PI_HARNESS_MODE_MESSAGE_TYPE);
+	assert.equal(startupMessage.display, false);
+	assert.match(startupMessage.content, /Tooling decision matrix/);
+	assert.match(startupMessage.content, /Environment execution policy/);
+	assert.equal(modeMessage.display, false);
+	assert.match(modeMessage.content, /\[HARNESS MODE: BALANCED\]/);
+	assert.deepEqual(customEntries, [
+		{
+			customType: "pi-harness-mode-state",
+			data: { version: 1, selectedMode: "balanced", lastSubmittedMode: "balanced" },
+		},
+	]);
+
+	const secondMessages = messagesFromBeforeAgentStartResults(await emitBeforeAgentStart(handlers));
+	assert.deepEqual(secondMessages, []);
+	assert.equal(customEntries.length, 1);
 });
 
-test("Shift+Tab cycles harness mode and updates status/editor highlight", async () => {
+test("Shift+Tab cycles harness mode and next submitted prompt emits changed mode", async () => {
 	const originalFetch = globalThis.fetch;
-	const handlers = new Map<string, (...args: any[]) => unknown>();
+	const handlers: TestExtensionHandlers = new Map();
+	const customEntries: Array<{ customType: string; data: any }> = [];
 	const statusCalls: Array<{ key: string; value: string }> = [];
 	const notifications: string[] = [];
 	let editorFactory: ((tui: any, theme: any, keybindings: any) => any) | undefined;
@@ -135,13 +182,16 @@ test("Shift+Tab cycles harness mode and updates status/editor highlight", async 
 			registerCommand() {},
 			registerShortcut() {},
 			on(event: string, handler: (...args: any[]) => unknown) {
-				handlers.set(event, handler);
+				addTestHandler(handlers, event, handler);
 			},
 			sendMessage() {},
+			appendEntry(customType: string, data: unknown) {
+				customEntries.push({ customType, data });
+			},
 		};
 		mastraPiExtension(pi as any);
 
-		const sessionStart = handlers.get("session_start");
+		const sessionStart = firstTestHandler(handlers, "session_start");
 		assert.equal(typeof sessionStart, "function");
 		await sessionStart?.(
 			{},
@@ -170,6 +220,12 @@ test("Shift+Tab cycles harness mode and updates status/editor highlight", async 
 
 		assert.equal(typeof editorFactory, "function");
 		assert.ok(statusCalls.some((call) => call.key === "harness-mode" && call.value === "Mode: balanced"));
+		const initialMessages = messagesFromBeforeAgentStartResults(await emitBeforeAgentStart(handlers));
+		assert.ok(initialMessages.some((message) => message.customType === PI_HARNESS_MODE_MESSAGE_TYPE && /\[HARNESS MODE: BALANCED\]/.test(message.content)));
+		assert.deepEqual(customEntries.at(-1), {
+			customType: "pi-harness-mode-state",
+			data: { version: 1, selectedMode: "balanced", lastSubmittedMode: "balanced" },
+		});
 
 		let renderRequests = 0;
 		const editor = editorFactory!(
@@ -184,6 +240,90 @@ test("Shift+Tab cycles harness mode and updates status/editor highlight", async 
 		assert.ok(notifications.includes("Mode: precision"));
 		assert.ok(statusCalls.some((call) => call.key === "harness-mode" && call.value === "Mode: precision"));
 		assert.ok(editor.render(40).some((line: string) => line.includes("Mode: precision")));
+		assert.deepEqual(customEntries.at(-1), {
+			customType: "pi-harness-mode-state",
+			data: { version: 1, selectedMode: "precision", lastSubmittedMode: "balanced" },
+		});
+		const changedModeMessages = messagesFromBeforeAgentStartResults(await emitBeforeAgentStart(handlers));
+		assert.equal(changedModeMessages.length, 1);
+		assert.equal(changedModeMessages[0].customType, PI_HARNESS_MODE_MESSAGE_TYPE);
+		assert.match(changedModeMessages[0].content, /\[HARNESS MODE: PRECISION\]/);
+		assert.deepEqual(customEntries.at(-1), {
+			customType: "pi-harness-mode-state",
+			data: { version: 1, selectedMode: "precision", lastSubmittedMode: "precision" },
+		});
+		assert.deepEqual(messagesFromBeforeAgentStartResults(await emitBeforeAgentStart(handlers)), []);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
+test("session_start restores submitted harness mode state for continue and resume", async () => {
+	const originalFetch = globalThis.fetch;
+	const handlers: TestExtensionHandlers = new Map();
+	const customEntries: Array<{ customType: string; data: unknown }> = [];
+
+	globalThis.fetch = (async (url: Parameters<typeof fetch>[0]) => {
+		const requestUrl = String(url);
+		if (requestUrl.endsWith("/agents?partial=true") || requestUrl.endsWith("/workflows?partial=true")) {
+			return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
+		}
+		if (requestUrl.includes(`/workflows/${encodeURIComponent(MASTRA_PI_AGENT_JOB_WORKFLOW_ID)}/runs?`)) {
+			return new Response(JSON.stringify({ runs: [] }), { status: 200, headers: { "content-type": "application/json" } });
+		}
+		return new Response("not found", { status: 404, statusText: "Not Found" });
+	}) as typeof fetch;
+
+	try {
+		const pi = {
+			registerTool() {},
+			registerMessageRenderer() {},
+			registerCommand() {},
+			registerShortcut() {},
+			on(event: string, handler: (...args: any[]) => unknown) {
+				addTestHandler(handlers, event, handler);
+			},
+			sendMessage() {},
+			appendEntry(customType: string, data: unknown) {
+				customEntries.push({ customType, data });
+			},
+		};
+		mastraPiExtension(pi as any);
+
+		const sessionStart = firstTestHandler(handlers, "session_start");
+		assert.equal(typeof sessionStart, "function");
+		await sessionStart?.(
+			{},
+			{
+				cwd: "/workspace/project",
+				hasUI: false,
+				sessionManager: {
+					getSessionId: () => "session-resumed",
+					getEntries: () => [
+						{
+							type: "custom",
+							customType: "pi-harness-mode-state",
+							data: { version: 1, selectedMode: "precision", lastSubmittedMode: "balanced" },
+						},
+					],
+				},
+				ui: {
+					theme: stubTheme,
+					notify() {},
+					setEditorComponent() {},
+					setWidget() {},
+					setStatus() {},
+				},
+			},
+		);
+
+		const resumedMessages = messagesFromBeforeAgentStartResults(await emitBeforeAgentStart(handlers));
+		assert.ok(resumedMessages.some((message) => message.customType === PI_HARNESS_MODE_MESSAGE_TYPE && /\[HARNESS MODE: PRECISION\]/.test(message.content)));
+		assert.deepEqual(customEntries.at(-1), {
+			customType: "pi-harness-mode-state",
+			data: { version: 1, selectedMode: "precision", lastSubmittedMode: "precision" },
+		});
+		assert.deepEqual(messagesFromBeforeAgentStartResults(await emitBeforeAgentStart(handlers)), []);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
@@ -277,6 +417,7 @@ test("extension queues async agent completion as steer reminder and message_end 
 			sendMessage(message: any, options: any) {
 				sentMessages.push({ message, options });
 			},
+			appendEntry() {},
 		};
 		mastraPiExtension(pi as any);
 

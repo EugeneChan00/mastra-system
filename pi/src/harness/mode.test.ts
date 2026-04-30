@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
 	DEFAULT_HARNESS_MODE,
+	PI_HARNESS_MODE_MESSAGE_TYPE,
 	createHarnessModeMessage,
 	createHarnessModeState,
 	formatHarnessModeStatus,
@@ -55,7 +56,8 @@ test("each harness mode has a label, highlight color, and prompt", () => {
 
 test("createHarnessModeMessage returns hidden harness context", () => {
 	const message = createHarnessModeMessage("precision");
-	assert.equal(message.customType, "mastra-harness-mode");
+	assert.equal(message.customType, PI_HARNESS_MODE_MESSAGE_TYPE);
+	assert.equal(message.customType, "pi-harness-mode");
 	assert.equal(message.display, false);
 	assert.match(message.content, /\[HARNESS MODE: PRECISION\]/);
 });

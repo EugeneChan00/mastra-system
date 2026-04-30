@@ -8,6 +8,7 @@ export interface HarnessModeDefinition {
 }
 
 export const DEFAULT_HARNESS_MODE: HarnessMode = "balanced";
+export const PI_HARNESS_MODE_MESSAGE_TYPE = "pi-harness-mode";
 
 const HARNESS_MODE_ORDER: readonly HarnessMode[] = ["quick", "balanced", "precision", "auto"];
 
@@ -72,13 +73,17 @@ export function getHarnessModeDefinition(mode: HarnessMode): HarnessModeDefiniti
 	return HARNESS_MODE_DEFINITIONS[assertHarnessMode(mode)];
 }
 
+export function isHarnessMode(mode: unknown): mode is HarnessMode {
+	return typeof mode === "string" && (HARNESS_MODE_ORDER as readonly string[]).includes(mode);
+}
+
 export function createHarnessModeMessage(mode: HarnessMode): {
-	customType: "mastra-harness-mode";
+	customType: typeof PI_HARNESS_MODE_MESSAGE_TYPE;
 	content: string;
 	display: false;
 } {
 	return {
-		customType: "mastra-harness-mode",
+		customType: PI_HARNESS_MODE_MESSAGE_TYPE,
 		content: getHarnessModeDefinition(mode).prompt,
 		display: false,
 	};
@@ -89,6 +94,6 @@ export function formatHarnessModeStatus(mode: HarnessMode): string {
 }
 
 function assertHarnessMode(mode: HarnessMode): HarnessMode {
-	if ((HARNESS_MODE_ORDER as readonly string[]).includes(mode)) return mode;
+	if (isHarnessMode(mode)) return mode;
 	throw new Error(`Invalid harness mode: ${String(mode)}`);
 }
