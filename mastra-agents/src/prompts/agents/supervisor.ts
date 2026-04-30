@@ -1,3 +1,4 @@
+// work item 8
 export const supervisorAgentDescription =
   "Supervisor Lead that orchestrates specialist Mastra agents for workspace-backed coding work.";
 

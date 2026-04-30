@@ -1,3 +1,4 @@
+// work item 7
 export const scoutAgentDescription =
   "Read-only repository discovery and current-state inspection for supervisor delegation.";
 

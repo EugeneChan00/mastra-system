@@ -109,7 +109,7 @@ test("policy prompt composes environment, development, and verification policy",
 	assert.match(PI_AGENT_ENVIRONMENT_EXECUTION_POLICY, /Environment execution policy/);
 	assert.match(PI_AGENT_DEVELOPMENT_POLICY, /Preserve unrelated worktree changes/);
 	assert.match(PI_AGENT_EXECUTION_VERIFICATION_POLICY, /Core invariant: agent output is an unverified claim/);
-	assert.match(PI_AGENT_EXECUTION_VERIFICATION_POLICY, /False-positive patterns/);
+	assert.match(PI_AGENT_EXECUTION_VERIFICATION_POLICY, /false-positive patterns/);
 	assert.match(PI_AGENT_EXECUTION_VERIFICATION_POLICY, /Verification decision matrix/);
 	assert.ok(PI_AGENT_POLICY_PROMPT.includes(PI_AGENT_ENVIRONMENT_EXECUTION_POLICY));
 	assert.ok(PI_AGENT_POLICY_PROMPT.includes(PI_AGENT_DEVELOPMENT_POLICY));

@@ -1,3 +1,4 @@
+// work item 9
 export const validatorAgentDescription =
   "Read-only validation of diffs, tests, contracts, and evidence for supervisor delegation.";
 

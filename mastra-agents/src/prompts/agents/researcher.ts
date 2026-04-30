@@ -1,3 +1,4 @@
+// work item 6
 export const researcherAgentDescription =
   "Read-only external documentation, ecosystem, and version-sensitive research for supervisor delegation.";
 

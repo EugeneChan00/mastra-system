@@ -1,3 +1,4 @@
+// work item 3
 export const advisorAgentDescription =
   "Read-only critique of plans, assumptions, risks, and tradeoffs for supervisor delegation.";
 
