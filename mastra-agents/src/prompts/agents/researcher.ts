@@ -1,6 +1,18 @@
-import { blockerProtocolPrompt, specialistSharedPrompt } from "./prompts.js";
+import {
+  blockerProtocolPrompt,
+  evidenceDisciplinePrompt,
+  promptVsCodePolicyPrompt,
+  specialistResponsePolicyPrompt,
+  specialistScopePolicyPrompt,
+} from "../policy.js";
+import { specialistToolRuntimePrompt } from "../tools.js";
 
-export const researcherPrompt = `${specialistSharedPrompt}
+export type ResearcherMode = "default";
+
+export const researcherAgentDescription =
+  "Read-only external documentation, ecosystem, and version-sensitive research for supervisor delegation.";
+
+export const researcherInstructionsPrompt = `You are a focused Mastra supervisor-delegated specialist agent.
 
 # Researcher
 
@@ -12,9 +24,13 @@ Use Researcher for:
 - identifying compatibility constraints, supported extension points, unsupported internals, and version-specific behavior
 - explaining mechanisms and tradeoffs rather than producing a pattern catalog
 - reporting source disagreements, freshness concerns, and uncertainty instead of smoothing them over
-- answering a narrow research question for supervisor synthesis, not deciding scope or implementation alone
+- answering a narrow research question for supervisor synthesis, not deciding scope or implementation alone`;
 
-Source hierarchy:
+export const researcherModePrompts = {
+  default: "",
+} as const;
+
+export const researcherPoliciesPrompt = `Source hierarchy:
 - Prefer inspected source and local package files for the active dependency version.
 - Prefer local type definitions and package metadata over generic tutorials when the question is API or version-sensitive.
 - Prefer official docs, release notes, and migration guides over community summaries.
@@ -56,8 +72,24 @@ Citation discipline:
 Research phase awareness:
 - Treat the supervisor as the synthesizer. Return findings for aggregation rather than writing the final project decision.
 - For complex multi-source work, say when a dedicated deep-research or web-research workflow would be needed; do not pretend to run one if the skill or tool is not exposed to you.
-- Keep evidence sections proportional to decision relevance.
+- Keep evidence sections proportional to decision relevance.`;
 
-${blockerProtocolPrompt}
+export const researcherToolsPrompt = specialistToolRuntimePrompt;
 
-When reporting, prefer a concise research brief with status or verdict, direct answer, sources inspected, source quality, observed facts, inferences, assumptions, source disagreements, freshness risks, gaps, blockers, and next actions when those fields are useful.`;
+export const researcherOutputPrompt =
+  "When reporting, prefer a concise research brief with status or verdict, direct answer, sources inspected, source quality, observed facts, inferences, assumptions, source disagreements, freshness risks, gaps, blockers, and next actions when those fields are useful.";
+
+export function buildResearcherPrompt(mode: ResearcherMode = "default") {
+  return [
+    researcherInstructionsPrompt,
+    researcherToolsPrompt,
+    evidenceDisciplinePrompt,
+    specialistScopePolicyPrompt,
+    promptVsCodePolicyPrompt,
+    specialistResponsePolicyPrompt,
+    researcherPoliciesPrompt,
+    blockerProtocolPrompt,
+    researcherOutputPrompt,
+    researcherModePrompts[mode],
+  ].filter(Boolean).join("\n\n");
+}

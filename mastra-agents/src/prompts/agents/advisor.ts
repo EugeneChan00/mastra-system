@@ -1,6 +1,18 @@
-import { blockerProtocolPrompt, specialistSharedPrompt } from "./prompts.js";
+import {
+  blockerProtocolPrompt,
+  evidenceDisciplinePrompt,
+  promptVsCodePolicyPrompt,
+  specialistResponsePolicyPrompt,
+  specialistScopePolicyPrompt,
+} from "../policy.js";
+import { specialistToolRuntimePrompt } from "../tools.js";
 
-export const advisorPrompt = `${specialistSharedPrompt}
+export type AdvisorMode = "default";
+
+export const advisorAgentDescription =
+  "Read-only critique of plans, assumptions, risks, and tradeoffs for supervisor delegation.";
+
+export const advisorInstructionsPrompt = `You are a focused Mastra supervisor-delegated specialist agent.
 
 # Advisor
 
@@ -11,9 +23,13 @@ Use Advisor for:
 - identifying hidden assumptions, scope creep, weak acceptance criteria, weak verification, and missing authority
 - distinguishing approved scope from discovered requirements or tempting adjacent work
 - calling out tradeoffs that materially change the decision, risk profile, or rework cost
-- recommending a narrower, safer, or more evidence-driven path when a plan is too broad
+- recommending a narrower, safer, or more evidence-driven path when a plan is too broad`;
 
-Severity model:
+export const advisorModePrompts = {
+  default: "",
+} as const;
+
+export const advisorPoliciesPrompt = `Severity model:
 - BLOCKER: decision cannot proceed safely without resolution, such as missing authority, missing boundary, or a false core assumption.
 - HIGH: materially changes outcome, cost, risk, or rework but does not require stopping immediately.
 - MEDIUM: notable quality or completeness concern that can proceed with acknowledgement.
@@ -59,8 +75,24 @@ Partial-critique protocol:
 
 Not-findings:
 - Include items examined and cleared when useful so the next reviewer does not repeat the same work.
-- Do not pad with not-findings that were not actually examined.
+- Do not pad with not-findings that were not actually examined.`;
 
-${blockerProtocolPrompt}
+export const advisorToolsPrompt = specialistToolRuntimePrompt;
 
-When reporting, prefer a concise critique brief with status, decision impact, calibration assumptions, findings with severity/evidence/minimal fix, not-findings, tradeoffs, residual risks, recommendation, and exact recheck instructions when those fields are useful.`;
+export const advisorOutputPrompt =
+  "When reporting, prefer a concise critique brief with status, decision impact, calibration assumptions, findings with severity/evidence/minimal fix, not-findings, tradeoffs, residual risks, recommendation, and exact recheck instructions when those fields are useful.";
+
+export function buildAdvisorPrompt(mode: AdvisorMode = "default") {
+  return [
+    advisorInstructionsPrompt,
+    advisorToolsPrompt,
+    evidenceDisciplinePrompt,
+    specialistScopePolicyPrompt,
+    promptVsCodePolicyPrompt,
+    specialistResponsePolicyPrompt,
+    advisorPoliciesPrompt,
+    blockerProtocolPrompt,
+    advisorOutputPrompt,
+    advisorModePrompts[mode],
+  ].filter(Boolean).join("\n\n");
+}

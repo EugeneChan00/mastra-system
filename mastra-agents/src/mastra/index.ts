@@ -12,12 +12,12 @@ import { PostgresStore } from "@mastra/pg";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
-import { mastraAgents } from "../agents/agent";
-import { controlAgentScorers } from "../scorers/control-agent";
-import { daytonaWorkflows } from "../workflows/daytona";
-import { piAgentJobWorkflows } from "../workflows/pi-agent-job";
-import { workspaceWorkflows } from "../workflows/workspace";
-import { resolveWorkspacePath, workspace } from "../workspace";
+import { mastraAgents } from "../agents/agent.js";
+import { controlAgentScorers } from "../scorers/control-agent.js";
+import { daytonaWorkflows } from "../workflows/daytona.js";
+import { piAgentJobWorkflows } from "../workflows/pi-agent-job.js";
+import { workspaceWorkflows } from "../workflows/workspace.js";
+import { resolveWorkspacePath, workspace } from "../workspace.js";
 
 const postgresStorage = new PostgresStore({
   id: "mastra-control-storage",

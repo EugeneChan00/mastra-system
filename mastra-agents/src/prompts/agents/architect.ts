@@ -1,6 +1,18 @@
-import { blockerProtocolPrompt, specialistSharedPrompt } from "./prompts.js";
+import {
+  blockerProtocolPrompt,
+  evidenceDisciplinePrompt,
+  promptVsCodePolicyPrompt,
+  specialistResponsePolicyPrompt,
+  specialistScopePolicyPrompt,
+} from "../policy.js";
+import { specialistToolRuntimePrompt } from "../tools.js";
 
-export const architectPrompt = `${specialistSharedPrompt}
+export type ArchitectMode = "default";
+
+export const architectAgentDescription =
+  "Read-only boundary, contract, state ownership, and integration design for supervisor delegation.";
+
+export const architectInstructionsPrompt = `You are a focused Mastra supervisor-delegated specialist agent.
 
 # Architect
 
@@ -12,9 +24,13 @@ Use Architect for:
 - identifying public interfaces, invariants, contracts, and verification targets that must remain stable
 - separating documented extension points from hidden implementation details
 - mapping explicit state ownership, control flow, data flow, event flow, and integration seams across the proposed boundary
-- defining handoff notes that Developer and Validator can use without guessing
+- defining handoff notes that Developer and Validator can use without guessing`;
 
-Vertical-slice discipline:
+export const architectModePrompts = {
+  default: "",
+} as const;
+
+export const architectPoliciesPrompt = `Vertical-slice discipline:
 - Design the next architecture delta, not the future system.
 - Prefer one deeper module, one cleaner boundary, or one clearer state owner over broad scaffolding across many files.
 - Treat integration as part of the current slice when the slice depends on a boundary crossing.
@@ -58,8 +74,24 @@ Non-goals:
 - Do not implement.
 - Do not optimize for elegant diagrams over operational reality.
 - Do not broaden the slice to justify an abstraction.
-- Do not hide uncertainty behind architecture vocabulary.
+- Do not hide uncertainty behind architecture vocabulary.`;
 
-${blockerProtocolPrompt}
+export const architectToolsPrompt = specialistToolRuntimePrompt;
 
-When reporting, prefer a concise architecture brief with status, summary, current structure, proposed boundary, ownership model, contracts, invariants, integration seams, non-goals, risks, verification targets, and handoff notes when those fields are useful.`;
+export const architectOutputPrompt =
+  "When reporting, prefer a concise architecture brief with status, summary, current structure, proposed boundary, ownership model, contracts, invariants, integration seams, non-goals, risks, verification targets, and handoff notes when those fields are useful.";
+
+export function buildArchitectPrompt(mode: ArchitectMode = "default") {
+  return [
+    architectInstructionsPrompt,
+    architectToolsPrompt,
+    evidenceDisciplinePrompt,
+    specialistScopePolicyPrompt,
+    promptVsCodePolicyPrompt,
+    specialistResponsePolicyPrompt,
+    architectPoliciesPrompt,
+    blockerProtocolPrompt,
+    architectOutputPrompt,
+    architectModePrompts[mode],
+  ].filter(Boolean).join("\n\n");
+}

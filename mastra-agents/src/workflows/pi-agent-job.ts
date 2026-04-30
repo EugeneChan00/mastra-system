@@ -3,7 +3,7 @@ import path from "node:path";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 
-import { resolveWorkspacePath } from "../workspace";
+import { resolveWorkspacePath } from "../workspace.js";
 
 const inputArgsSchema = z.record(z.string()).optional();
 

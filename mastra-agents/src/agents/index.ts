@@ -8,4 +8,4 @@ export { advisorAgent } from "./advisor-agent.js";
 export { developerAgent } from "./developer-agent.js";
 export { validatorAgent } from "./validator-agent.js";
 export * from "./shared.js";
-export * from "./prompts.js";
+export * from "../prompts/index.js";

@@ -1,7 +1,7 @@
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 
-import { workspace } from "../workspace";
+import { workspace } from "../workspace.js";
 
 const workspaceSmokeStep = createStep({
   id: "workspace-smoke",
