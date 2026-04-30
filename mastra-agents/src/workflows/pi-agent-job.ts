@@ -6,16 +6,31 @@ import {
   RequestContext,
 } from "@mastra/core/request-context";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
+import { PostgresStore } from "@mastra/pg";
 import { z } from "zod";
 
 import {
   createMastraAgentHarness,
+  formatMastraAgentHarnessModePrompt,
+  REQUEST_CONTEXT_ACTIVE_AGENT_ID_KEY,
   REQUEST_CONTEXT_HARDNESS_MODE_KEY,
-  resolveMastraAgentHarnessModeId,
+  REQUEST_CONTEXT_HARNESS_MODE_ID_KEY,
+  REQUEST_CONTEXT_HARNESS_MODE_KEY,
+  REQUEST_CONTEXT_LAST_SUBMITTED_HARNESS_MODE_ID_KEY,
+  resolveMastraAgentHarnessMode,
+  type ResolvedMastraAgentHarnessMode,
 } from "../agents/harness.js";
 import { resolveWorkspacePath } from "../workspace.js";
 
 const inputArgsSchema = z.record(z.string()).optional();
+const modePromptTrackerStore = new PostgresStore({
+  id: "mastra-agent-mode-prompt-tracker",
+  connectionString:
+    process.env.DATABASE_URL ??
+    "postgresql://mastra:mastra@mastra-postgres:5432/mastra",
+});
+let modePromptTrackerStoreInit: Promise<void> | undefined;
+const inMemoryModePromptTracker = new Map<string, string>();
 
 const piAgentJobInputSchema = z.object({
   jobId: z.string(),
@@ -24,6 +39,8 @@ const piAgentJobInputSchema = z.object({
   runId: z.string().optional(),
   agentRunId: z.string().optional(),
   agentId: z.string(),
+  harnessMode: z.string().optional(),
+  harnessModeId: z.string().optional(),
   hardnessMode: z.string().optional(),
   message: z.string(),
   threadId: z.string(),
@@ -42,6 +59,8 @@ const piAgentJobOutputSchema = z.object({
   runId: z.string().optional(),
   agentRunId: z.string().optional(),
   agentId: z.string(),
+  harnessMode: z.string().optional(),
+  harnessModeId: z.string().optional(),
   hardnessMode: z.string().optional(),
   threadId: z.string(),
   resourceId: z.string(),
@@ -70,18 +89,24 @@ export const runPiAgentJobStep = createStep({
     const eventsPath = path.join(artifactDir, "events.jsonl");
     const errors: string[] = [];
     let text = "";
-    let resolvedHardnessMode = inputData.hardnessMode;
+    let resolvedHarnessMode = inputData.harnessMode;
+    let resolvedHarnessModeId = inputData.harnessModeId ?? inputData.harnessMode ?? inputData.hardnessMode;
 
     try {
       const harness = resolveHarness(mastra);
-      const hardnessMode = resolveMastraAgentHarnessModeId({
+      const resolvedMode = resolveMastraAgentHarnessMode({
         agentId: inputData.agentId,
+        harnessMode: inputData.harnessMode ?? inputData.harnessModeId,
         hardnessMode: inputData.hardnessMode,
       });
-      resolvedHardnessMode = hardnessMode;
+      resolvedHarnessMode = resolvedMode.harnessMode;
+      resolvedHarnessModeId = resolvedMode.harnessModeId;
       const requestContext = {
         ...(inputData.requestContext ?? {}),
-        [REQUEST_CONTEXT_HARDNESS_MODE_KEY]: hardnessMode,
+        [REQUEST_CONTEXT_ACTIVE_AGENT_ID_KEY]: resolvedMode.activeAgentId,
+        [REQUEST_CONTEXT_HARNESS_MODE_KEY]: resolvedMode.harnessMode,
+        [REQUEST_CONTEXT_HARNESS_MODE_ID_KEY]: resolvedMode.harnessModeId,
+        [REQUEST_CONTEXT_HARDNESS_MODE_KEY]: resolvedMode.harnessModeId,
         ...(inputData.input_args && Object.keys(inputData.input_args).length > 0 ? { input_args: inputData.input_args } : {}),
       };
       text = await streamHarnessMessage({
@@ -92,7 +117,7 @@ export const runPiAgentJobStep = createStep({
         message: formatPrompt(inputData.message, inputData.input_args),
         threadId: inputData.threadId,
         resourceId: inputData.resourceId,
-        hardnessMode,
+        resolvedMode,
         requestContext,
         abortSignal,
       });
@@ -110,7 +135,9 @@ export const runPiAgentJobStep = createStep({
         runId: inputData.runId,
         agentRunId: inputData.agentRunId,
         agentId: inputData.agentId,
-        hardnessMode: resolvedHardnessMode,
+        harnessMode: resolvedHarnessMode,
+        harnessModeId: resolvedHarnessModeId,
+        hardnessMode: resolvedHarnessModeId,
         threadId: inputData.threadId,
         resourceId: inputData.resourceId,
         status: "error" as const,
@@ -128,7 +155,9 @@ export const runPiAgentJobStep = createStep({
       runId: inputData.runId,
       agentRunId: inputData.agentRunId,
       agentId: inputData.agentId,
-      hardnessMode: resolvedHardnessMode,
+      harnessMode: resolvedHarnessMode,
+      harnessModeId: resolvedHarnessModeId,
+      hardnessMode: resolvedHarnessModeId,
       threadId: inputData.threadId,
       resourceId: inputData.resourceId,
       status: "done" as const,
@@ -170,6 +199,134 @@ function resolveHarness(mastra: any): ReturnType<typeof createMastraAgentHarness
   return createMastraAgentHarness();
 }
 
+async function shouldSubmitHarnessModePrompt({
+  harness,
+  threadId,
+  resourceId,
+  harnessModeId,
+}: {
+  harness: ReturnType<typeof createMastraAgentHarness>;
+  threadId: string;
+  resourceId: string;
+  harnessModeId: string;
+}): Promise<boolean> {
+  const lastSubmitted = await readLastSubmittedHarnessModeId({ harness, threadId, resourceId });
+  return lastSubmitted !== harnessModeId;
+}
+
+async function recordSubmittedHarnessModePrompt({
+  harness,
+  threadId,
+  resourceId,
+  harnessModeId,
+}: {
+  harness: ReturnType<typeof createMastraAgentHarness>;
+  threadId: string;
+  resourceId: string;
+  harnessModeId: string;
+}): Promise<void> {
+  inMemoryModePromptTracker.set(threadKey(threadId, resourceId), harnessModeId);
+  await harness.setState({ lastSubmittedHarnessModeId: harnessModeId as any }).catch(() => undefined);
+  await harness.setThreadSetting({ key: REQUEST_CONTEXT_LAST_SUBMITTED_HARNESS_MODE_ID_KEY, value: harnessModeId }).catch(() => undefined);
+  await writeLastSubmittedHarnessModeId({ threadId, resourceId, harnessModeId });
+}
+
+async function readLastSubmittedHarnessModeId({
+  harness,
+  threadId,
+  resourceId,
+}: {
+  harness: ReturnType<typeof createMastraAgentHarness>;
+  threadId: string;
+  resourceId: string;
+}): Promise<string | undefined> {
+  const threadMetadataValue = await readHarnessThreadMetadataValue({ harness, threadId });
+  return threadMetadataValue ?? (await readStoredThreadMetadataValue({ threadId, resourceId })) ?? inMemoryModePromptTracker.get(threadKey(threadId, resourceId));
+}
+
+async function readHarnessThreadMetadataValue({
+  harness,
+  threadId,
+}: {
+  harness: ReturnType<typeof createMastraAgentHarness>;
+  threadId: string;
+}): Promise<string | undefined> {
+  try {
+    const threads = await harness.listThreads();
+    const thread = threads.find((candidate) => candidate.id === threadId);
+    return stringField(thread?.metadata, REQUEST_CONTEXT_LAST_SUBMITTED_HARNESS_MODE_ID_KEY);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readStoredThreadMetadataValue({
+  threadId,
+  resourceId,
+}: {
+  threadId: string;
+  resourceId: string;
+}): Promise<string | undefined> {
+  try {
+    const memoryStore = await modePromptMemoryStore();
+    const thread = await memoryStore.getThreadById({ threadId });
+    if (!thread) return undefined;
+    if (thread.resourceId && thread.resourceId !== resourceId) return undefined;
+    return stringField(thread.metadata, REQUEST_CONTEXT_LAST_SUBMITTED_HARNESS_MODE_ID_KEY);
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeLastSubmittedHarnessModeId({
+  threadId,
+  resourceId,
+  harnessModeId,
+}: {
+  threadId: string;
+  resourceId: string;
+  harnessModeId: string;
+}): Promise<void> {
+  inMemoryModePromptTracker.set(threadKey(threadId, resourceId), harnessModeId);
+  try {
+    const memoryStore = await modePromptMemoryStore();
+    const existingThread = await memoryStore.getThreadById({ threadId });
+    const now = new Date();
+    await memoryStore.saveThread({
+      thread: {
+        id: threadId,
+        resourceId: existingThread?.resourceId ?? resourceId,
+        title: existingThread?.title ?? "",
+        createdAt: existingThread?.createdAt ?? now,
+        updatedAt: now,
+        metadata: {
+          ...(existingThread?.metadata ?? {}),
+          [REQUEST_CONTEXT_LAST_SUBMITTED_HARNESS_MODE_ID_KEY]: harnessModeId,
+        },
+      },
+    });
+  } catch {
+    // The in-memory tracker still prevents duplicate mode prompts within this process.
+  }
+}
+
+async function modePromptMemoryStore() {
+  modePromptTrackerStoreInit ??= modePromptTrackerStore.init().catch((error) => {
+    modePromptTrackerStoreInit = undefined;
+    throw error;
+  });
+  await modePromptTrackerStoreInit;
+  const memoryStore = await modePromptTrackerStore.getStore("memory");
+  if (!memoryStore) {
+    throw new Error("Mode prompt tracker storage does not expose a memory store.");
+  }
+  return memoryStore;
+}
+
+function threadKey(threadId: string, resourceId: string): string {
+  return `${resourceId}:${threadId}`;
+}
+
 async function streamHarnessMessage({
   harness,
   writer,
@@ -178,7 +335,7 @@ async function streamHarnessMessage({
   message,
   threadId,
   resourceId,
-  hardnessMode,
+  resolvedMode,
   requestContext,
   abortSignal,
 }: {
@@ -189,7 +346,7 @@ async function streamHarnessMessage({
   message: string;
   threadId: string;
   resourceId: string;
-  hardnessMode: string;
+  resolvedMode: ResolvedMastraAgentHarnessMode;
   requestContext: Record<string, unknown>;
   abortSignal?: AbortSignal;
 }): Promise<string> {
@@ -279,16 +436,46 @@ async function streamHarnessMessage({
     await harness.init();
     harness.setResourceId({ resourceId });
     await harness.switchThread({ threadId });
-    if (harness.getCurrentModeId() !== hardnessMode) {
-      await harness.switchMode({ modeId: hardnessMode });
+    if (harness.getCurrentModeId() !== resolvedMode.harnessModeId) {
+      await harness.switchMode({ modeId: resolvedMode.harnessModeId });
     }
-    await harness.setState({ hardnessMode });
+    await harness.setState({
+      activeAgentId: resolvedMode.activeAgentId,
+      harnessMode: resolvedMode.harnessMode,
+      harnessModeId: resolvedMode.harnessModeId,
+      hardnessMode: resolvedMode.harnessModeId,
+    });
+    const shouldSubmitModePrompt = await shouldSubmitHarnessModePrompt({
+      harness,
+      threadId,
+      resourceId,
+      harnessModeId: resolvedMode.harnessModeId,
+    });
     const mastraRequestContext = requestContextFromRecord(requestContext, threadId, resourceId);
+    const content = shouldSubmitModePrompt
+      ? `${formatMastraAgentHarnessModePrompt(resolvedMode)}\n\n${message}`
+      : message;
     await harness.sendMessage({
-      content: message,
+      content,
       requestContext: mastraRequestContext,
     });
-    emitChunk({ type: "finish", payload: { hardnessMode } });
+    if (shouldSubmitModePrompt) {
+      await recordSubmittedHarnessModePrompt({
+        harness,
+        threadId,
+        resourceId,
+        harnessModeId: resolvedMode.harnessModeId,
+      });
+    }
+    emitChunk({
+      type: "finish",
+      payload: {
+        activeAgentId: resolvedMode.activeAgentId,
+        harnessMode: resolvedMode.harnessMode,
+        harnessModeId: resolvedMode.harnessModeId,
+        hardnessMode: resolvedMode.harnessModeId,
+      },
+    });
     await writeQueue;
     return text;
   } finally {
@@ -335,6 +522,12 @@ function textDelta(chunk: unknown): string {
   if (typeof chunk.delta === "string") return chunk.delta;
   if (isRecord(chunk.payload) && typeof chunk.payload.text === "string") return chunk.payload.text;
   return "";
+}
+
+function stringField(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const fieldValue = value[key];
+  return typeof fieldValue === "string" && fieldValue.length > 0 ? fieldValue : undefined;
 }
 
 async function appendJsonLine(filePath: string, value: unknown): Promise<void> {

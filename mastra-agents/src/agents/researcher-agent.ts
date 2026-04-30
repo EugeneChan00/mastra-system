@@ -3,12 +3,13 @@ import { Agent } from "@mastra/core/agent";
 import {
   researcherAgentDescription,
   researcherInstructionsPrompt,
+  researcherModePrompts,
   researcherPolicyPrompts,
   researcherToolPrompts,
 } from "../prompts/agents/researcher.js";
 import { sharedPolicyPrompts } from "../prompts/policy.js";
 import { sharedToolPrompts } from "../prompts/tools.js";
-import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
+import { agentDefaultOptions, agentModesFromPrompts, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
 
 export const researcherAgent = withAgentModes(new Agent({
   id: "researcher-agent",
@@ -24,4 +25,4 @@ export const researcherAgent = withAgentModes(new Agent({
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.researcher,
-}));
+}), agentModesFromPrompts(researcherModePrompts));

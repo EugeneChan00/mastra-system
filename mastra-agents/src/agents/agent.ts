@@ -3,6 +3,7 @@ import { Agent } from "@mastra/core/agent";
 import {
   supervisorAgentDescription,
   supervisorInstructionsPrompt,
+  supervisorModePrompts,
   supervisorPolicyPrompts,
   supervisorToolPrompts,
 } from "../prompts/agents/supervisor.js";
@@ -11,16 +12,15 @@ import { sharedToolPrompts } from "../prompts/tools.js";
 import { workspaceTools } from "../tools/workspace.js";
 import { advisorAgent } from "./advisor-agent.js";
 import { architectAgent } from "./architect-agent.js";
-import { controlAgent } from "./control-agent.js";
 import { developerAgent } from "./developer-agent.js";
 import { researcherAgent } from "./researcher-agent.js";
 import { scoutAgent } from "./scout-agent.js";
-import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultSupervisorModel, withAgentModes } from "./shared.js";
+import { agentDefaultOptions, agentModesFromPrompts, composeAgentInstructions, createAgentMemory, defaultSupervisorModel, withAgentModes } from "./shared.js";
 import { validatorAgent } from "./validator-agent.js";
 
 export const supervisorAgent = withAgentModes(new Agent({
   id: "supervisor-agent",
-  name: "Mastra System Supervisor",
+  name: "Supervisor Lead",
   description: supervisorAgentDescription,
   instructions: composeAgentInstructions(
     supervisorInstructionsPrompt,
@@ -46,11 +46,10 @@ export const supervisorAgent = withAgentModes(new Agent({
     write_file: workspaceTools.writeFile,
     edit_file: workspaceTools.replaceInFile,
   },
-}));
+}), agentModesFromPrompts(supervisorModePrompts));
 
 export const mastraAgents = {
   supervisorAgent,
-  controlAgent,
   scoutAgent,
   researcherAgent,
   architectAgent,

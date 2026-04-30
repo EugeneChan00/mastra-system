@@ -12,7 +12,6 @@ const prompts = await jiti.import("../src/prompts/index.ts");
 const promptModules = {
 	advisor: await jiti.import("../src/prompts/agents/advisor.ts"),
 	architect: await jiti.import("../src/prompts/agents/architect.ts"),
-	control: await jiti.import("../src/prompts/agents/control.ts"),
 	developer: await jiti.import("../src/prompts/agents/developer.ts"),
 	researcher: await jiti.import("../src/prompts/agents/researcher.ts"),
 	scout: await jiti.import("../src/prompts/agents/scout.ts"),
@@ -22,7 +21,6 @@ const promptModules = {
 const agentModules = {
 	advisor: await jiti.import("../src/agents/advisor-agent.ts"),
 	architect: await jiti.import("../src/agents/architect-agent.ts"),
-	control: await jiti.import("../src/agents/control-agent.ts"),
 	developer: await jiti.import("../src/agents/developer-agent.ts"),
 	researcher: await jiti.import("../src/agents/researcher-agent.ts"),
 	scout: await jiti.import("../src/agents/scout-agent.ts"),
@@ -34,7 +32,6 @@ const agentsIndex = await jiti.import("../src/agents/index.ts");
 const expectedAgentPromptFiles = [
 	"advisor.ts",
 	"architect.ts",
-	"control.ts",
 	"developer.ts",
 	"researcher.ts",
 	"scout.ts",
@@ -45,7 +42,6 @@ const expectedAgentPromptFiles = [
 const agentRegistrationFiles = [
 	"advisor-agent.ts",
 	"architect-agent.ts",
-	"control-agent.ts",
 	"developer-agent.ts",
 	"researcher-agent.ts",
 	"scout-agent.ts",
@@ -56,7 +52,6 @@ const agentRegistrationFiles = [
 const removedBuilderExports = [
 	"buildAdvisorPrompt",
 	"buildArchitectPrompt",
-	"buildControlPrompt",
 	"buildDeveloperPrompt",
 	"buildResearcherPrompt",
 	"buildScoutPrompt",
@@ -69,7 +64,6 @@ const removedSharedFragmentExports = [
 	"blockerProtocolPrompt",
 	"specialistToolRuntimePrompt",
 	"supervisorToolPrompt",
-	"controlToolPrompt",
 ];
 
 const agentContracts = [
@@ -90,15 +84,6 @@ const agentContracts = [
 		toolExport: "architectToolPrompts",
 		agentContextNeedle: "Vertical-slice discipline:",
 		sharedToolNeedle: "Operate inside the tools exposed",
-	},
-	{
-		name: "control",
-		agentExport: "controlAgent",
-		instructionsExport: "controlInstructionsPrompt",
-		policyExport: "controlPolicyPrompts",
-		toolExport: "controlToolPrompts",
-		agentContextNeedle: "Memory discipline:",
-		sharedToolNeedle: "Workspace tool policy:",
 	},
 	{
 		name: "developer",
@@ -167,8 +152,8 @@ test("prompt index exports grouped surfaces without builder prompts", () => {
 		assert.equal(fragmentName in prompts, false, `${fragmentName} should not be exported individually`);
 	}
 
-	assert.deepEqual(Object.keys(prompts.sharedPolicyPrompts).sort(), ["control", "specialist", "supervisor"]);
-	assert.deepEqual(Object.keys(prompts.sharedToolPrompts).sort(), ["control", "specialist", "supervisor"]);
+	assert.deepEqual(Object.keys(prompts.sharedPolicyPrompts).sort(), ["specialist", "supervisor"]);
+	assert.deepEqual(Object.keys(prompts.sharedToolPrompts).sort(), ["specialist", "supervisor"]);
 });
 
 test("agent registrations import agent prompt modules directly", async () => {
@@ -212,29 +197,76 @@ test("agent registrations bake runtime policy and tooling into instructions for 
 	}
 });
 
-test("agents expose placeholder modes and Harness mode composition", () => {
-	const registeredAgents = Object.values(agentsIndex.mastraAgents);
-	assert.equal(registeredAgents.length, 8);
+test("agents expose shared local modes and Harness mode composition", () => {
+	const expectedAgentModes = {
+		supervisorAgent: ["balanced", "scope", "plan", "build", "verify"],
+		scoutAgent: ["balanced", "scope", "research"],
+		researcherAgent: ["balanced", "research", "brainstorm", "analysis"],
+		architectAgent: ["balanced", "scope", "analysis"],
+		advisorAgent: ["balanced", "scope", "analysis", "audit"],
+		developerAgent: ["balanced", "build", "verify"],
+		validatorAgent: ["balanced", "test", "audit", "debug"],
+	};
+	const registeredAgents = Object.entries(agentsIndex.mastraAgents);
+	assert.equal(registeredAgents.length, 7);
 
-	for (const agent of registeredAgents) {
-		assert.equal(agent.mode, "default");
-		assert.deepEqual(agent.modes, [{ id: "default", name: "Default", default: true }]);
+	for (const [agentKey, agent] of registeredAgents) {
+		const expectedModes = expectedAgentModes[agentKey];
+		assert.ok(expectedModes, `unexpected agent registration ${agentKey}`);
+		assert.equal(agent.mode, "balanced");
+		assert.deepEqual(agent.modes.map((mode) => mode.id), expectedModes);
+		assert.deepEqual(agent.modes.map((mode) => mode.default), expectedModes.map((modeId) => modeId === "balanced"));
 	}
 
-	assert.deepEqual(
-		agentsIndex.mastraAgentHarnessModes.map((mode) => mode.id),
-		["supervisor", "control", "scout", "researcher", "architect", "advisor", "developer", "validator"],
-	);
+	const expectedHarnessModeIds = [
+		"supervisor.balanced",
+		"supervisor.scope",
+		"supervisor.plan",
+		"supervisor.build",
+		"supervisor.verify",
+		"scout.balanced",
+		"scout.scope",
+		"scout.research",
+		"researcher.balanced",
+		"researcher.research",
+		"researcher.brainstorm",
+		"researcher.analysis",
+		"architect.balanced",
+		"architect.scope",
+		"architect.analysis",
+		"advisor.balanced",
+		"advisor.scope",
+		"advisor.analysis",
+		"advisor.audit",
+		"developer.balanced",
+		"developer.build",
+		"developer.verify",
+		"validator.balanced",
+		"validator.test",
+		"validator.audit",
+		"validator.debug",
+	];
+	assert.deepEqual(agentsIndex.mastraAgentHarnessModes.map((mode) => mode.id), expectedHarnessModeIds);
 	assert.deepEqual(
 		agentsIndex.mastraAgentHarness.listModes().map((mode) => mode.id),
-		agentsIndex.mastraAgentHarnessModes.map((mode) => mode.id),
+		expectedHarnessModeIds,
 	);
-	assert.equal(agentsIndex.mastraAgentHarness.getState().hardnessMode, "supervisor");
-	assert.equal(agentsIndex.resolveMastraAgentHarnessModeId({ agentId: "validator-agent" }), "validator");
-	assert.equal(agentsIndex.resolveMastraAgentHarnessModeId({ hardnessMode: "developer", agentId: "validator-agent" }), "developer");
+	assert.equal(agentsIndex.mastraAgentHarness.getState().harnessMode, "balanced");
+	assert.equal(agentsIndex.mastraAgentHarness.getState().harnessModeId, "supervisor.balanced");
+	assert.equal(agentsIndex.mastraAgentHarness.getState().hardnessMode, "supervisor.balanced");
+	assert.equal(agentsIndex.resolveMastraAgentHarnessModeId({ agentId: "validator-agent" }), "validator.balanced");
+	assert.equal(agentsIndex.resolveMastraAgentHarnessModeId({ harnessMode: "audit", agentId: "validator-agent" }), "validator.audit");
+	assert.equal(agentsIndex.resolveMastraAgentHarnessModeId({ harnessMode: "developer.build", agentId: "validator-agent" }), "developer.build");
+	assert.equal(agentsIndex.resolveMastraAgentHarnessModeId({ hardnessMode: "developer", agentId: "validator-agent" }), "developer.balanced");
+	assert.match(
+		agentsIndex.formatMastraAgentHarnessModePrompt(
+			agentsIndex.resolveMastraAgentHarnessMode({ harnessMode: "build", agentId: "developer-agent" }),
+		),
+		/<harness-mode id="developer\.build" agent="developer" mode="build">/,
+	);
 	assert.throws(
-		() => agentsIndex.resolveMastraAgentHarnessModeId({ hardnessMode: "unknown" }),
-		/Unknown hardnessMode/,
+		() => agentsIndex.resolveMastraAgentHarnessModeId({ harnessMode: "unknown" }),
+		/Unknown harness mode/,
 	);
 });
 

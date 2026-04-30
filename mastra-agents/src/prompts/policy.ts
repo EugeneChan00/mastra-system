@@ -87,8 +87,4 @@ export const sharedPolicyPrompts = {
     supervisorRuntimePolicyPrompt,
     blockerProtocolPrompt,
   ],
-  control: [
-    evidenceDisciplinePrompt,
-    blockerProtocolPrompt,
-  ],
 } as const;

@@ -3,12 +3,13 @@ import { Agent } from "@mastra/core/agent";
 import {
   architectAgentDescription,
   architectInstructionsPrompt,
+  architectModePrompts,
   architectPolicyPrompts,
   architectToolPrompts,
 } from "../prompts/agents/architect.js";
 import { sharedPolicyPrompts } from "../prompts/policy.js";
 import { sharedToolPrompts } from "../prompts/tools.js";
-import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
+import { agentDefaultOptions, agentModesFromPrompts, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
 
 export const architectAgent = withAgentModes(new Agent({
   id: "architect-agent",
@@ -24,4 +25,4 @@ export const architectAgent = withAgentModes(new Agent({
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.architect,
-}));
+}), agentModesFromPrompts(architectModePrompts));

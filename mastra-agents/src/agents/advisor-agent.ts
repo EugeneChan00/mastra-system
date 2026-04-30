@@ -3,12 +3,13 @@ import { Agent } from "@mastra/core/agent";
 import {
   advisorAgentDescription,
   advisorInstructionsPrompt,
+  advisorModePrompts,
   advisorPolicyPrompts,
   advisorToolPrompts,
 } from "../prompts/agents/advisor.js";
 import { sharedPolicyPrompts } from "../prompts/policy.js";
 import { sharedToolPrompts } from "../prompts/tools.js";
-import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
+import { agentDefaultOptions, agentModesFromPrompts, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
 
 export const advisorAgent = withAgentModes(new Agent({
   id: "advisor-agent",
@@ -24,4 +25,4 @@ export const advisorAgent = withAgentModes(new Agent({
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.advisor,
-}));
+}), agentModesFromPrompts(advisorModePrompts));

@@ -20,6 +20,8 @@ import {
 	MASTRA_WORKFLOW_LIST_TOOL_NAME,
 	MASTRA_WORKFLOW_STATUS_TOOL_NAME,
 	REQUEST_CONTEXT_HARDNESS_MODE_KEY,
+	REQUEST_CONTEXT_HARNESS_MODE_ID_KEY,
+	REQUEST_CONTEXT_HARNESS_MODE_KEY,
 	REQUEST_CONTEXT_MODE_ID_KEY,
 } from "../const.js";
 import { MastraAgentCard } from "../tui/index.js";
@@ -57,7 +59,8 @@ export const MASTRA_AGENT_QUERY_PARAMETERS = Type.Object({
 	message: Type.String({ description: "User message to send to the Mastra agent" }),
 	jobName: Type.Optional(Type.String({ description: "Short semantic name for this background job. Used in the Mastra thread id; omit to derive one from the prompt." })),
 	synchronous: Type.Optional(Type.Boolean({ description: "Execute synchronously and return final result. Defaults to false (async-by-default). When false, returns a job id immediately and streams progress to the Pi TUI." })),
-	hardnessMode: Type.Optional(Type.String({ description: "Mastra Harness mode id to activate for this query, such as supervisor, control, developer, or validator." })),
+	"harness-mode": Type.Optional(Type.String({ description: "Mastra Harness local or composite mode to activate, such as balanced, analysis, developer.build, or validator.audit." })),
+	hardnessMode: Type.Optional(Type.String({ description: "Deprecated alias for harness-mode." })),
 	threadId: Type.Optional(Type.String({ description: "Mastra memory thread id" })),
 	resourceId: Type.Optional(Type.String({ description: "Mastra memory resource id" })),
 	requestContext: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Request-scoped context for Mastra" })),
@@ -480,6 +483,9 @@ export class MastraAsyncAgentManager {
 		const status = workflowRunStatus(run);
 		if (output.artifactPath) job.artifactPath = output.artifactPath;
 		if (output.eventsPath) job.eventsPath = output.eventsPath;
+		if (output.harnessMode) job.details.harnessMode = output.harnessMode;
+		if (output.harnessModeId) job.details.harnessModeId = output.harnessModeId;
+		if (output.hardnessMode) job.details.hardnessMode = output.hardnessMode;
 		if (output.text && !job.details.text) job.details.text = output.text;
 		for (const error of output.errors ?? []) pushUniqueError(job.details, error);
 
@@ -543,6 +549,8 @@ export class MastraAsyncAgentManager {
 			jobId,
 			jobName,
 			piSessionId,
+			harnessMode: stringField(input, "harnessMode"),
+			harnessModeId: stringField(input, "harnessModeId"),
 			hardnessMode: stringField(input, "hardnessMode"),
 			threadId,
 			resourceId,
@@ -641,6 +649,8 @@ export class MastraAsyncAgentManager {
 			jobId: job.jobId,
 			agentId: details.agentId,
 			modeId: details.modeId,
+			harnessMode: details.harnessMode,
+			harnessModeId: details.harnessModeId,
 			hardnessMode: details.hardnessMode,
 			threadId: details.threadId,
 			resourceId: details.resourceId,
@@ -722,6 +732,7 @@ export function createMastraAgentQueryTool(
 			signal?: AbortSignal,
 			onUpdate?: AgentToolUpdateCallback<MastraAgentCallDetails>,
 		): Promise<AgentToolResult<MastraAgentCallDetails | Record<string, unknown>>> {
+			const harnessMode = requestedHarnessMode(params);
 			// Default to async unless synchronous is explicitly true
 			if (params.synchronous !== true) {
 				if (signal?.aborted) {
@@ -731,6 +742,7 @@ export function createMastraAgentQueryTool(
 							jobId: "",
 							agentId: params.agentId,
 							modeId: undefined,
+							harnessMode,
 							hardnessMode: params.hardnessMode,
 							threadId: params.threadId ?? defaultThreadId(params.agentId),
 							resourceId: params.resourceId ?? defaultResourceId(),
@@ -752,6 +764,7 @@ export function createMastraAgentQueryTool(
 						agentId: params.agentId,
 						message: params.message,
 						jobName: params.jobName,
+						harnessMode,
 						hardnessMode: params.hardnessMode,
 						threadId: params.threadId,
 						resourceId: params.resourceId,
@@ -777,6 +790,7 @@ export function createMastraAgentQueryTool(
 				message: params.message,
 				jobName: params.jobName,
 				hardnessMode: params.hardnessMode,
+				harnessMode,
 				threadId: params.threadId,
 				resourceId: params.resourceId,
 				requestContext: params.requestContext,
@@ -1154,9 +1168,16 @@ export function normalizeInspectAgentIds(params: MastraAgentInspectInput): strin
 	return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
 }
 
+function requestedHarnessMode(params: Pick<MastraAgentCallInput, "harness-mode" | "harnessMode" | "harnessModeId" | "hardnessMode">): string | undefined {
+	return params["harness-mode"] ?? params.harnessMode ?? params.harnessModeId ?? params.hardnessMode;
+}
+
 export function createStreamRequest(params: MastraAgentCallInput, threadId: string, resourceId: string): MastraStreamRequest {
 	const requestContext = { ...(params.requestContext ?? {}) };
+	const harnessMode = requestedHarnessMode(params);
 	if (params.modeId) requestContext[REQUEST_CONTEXT_MODE_ID_KEY] = params.modeId;
+	if (harnessMode) requestContext[REQUEST_CONTEXT_HARNESS_MODE_KEY] = harnessMode;
+	if (params.harnessModeId) requestContext[REQUEST_CONTEXT_HARNESS_MODE_ID_KEY] = params.harnessModeId;
 	if (params.hardnessMode) requestContext[REQUEST_CONTEXT_HARDNESS_MODE_KEY] = params.hardnessMode;
 
 	const message = params.message;
@@ -1198,6 +1219,8 @@ export function createStreamRequest(params: MastraAgentCallInput, threadId: stri
 				activeTools: params.activeTools,
 				requestContext: Object.keys(requestContext).length > 0 ? requestContext : undefined,
 				input_args: params.input_args,
+				...(harnessMode ? { harnessMode } : {}),
+				...(params.harnessModeId ? { harnessModeId: params.harnessModeId } : {}),
 				...(params.hardnessMode ? { hardnessMode: params.hardnessMode } : {}),
 			};
 		}
@@ -1212,6 +1235,8 @@ export function createStreamRequest(params: MastraAgentCallInput, threadId: stri
 		maxSteps: params.maxSteps,
 		activeTools: params.activeTools,
 		requestContext: Object.keys(requestContext).length > 0 ? requestContext : undefined,
+		...(harnessMode ? { harnessMode } : {}),
+		...(params.harnessModeId ? { harnessModeId: params.harnessModeId } : {}),
 		...(params.hardnessMode ? { hardnessMode: params.hardnessMode } : {}),
 	};
 }
@@ -1237,6 +1262,8 @@ function workflowJobRequest(job: MastraAsyncAgentJob): MastraWorkflowStreamReque
 			runId: job.runId,
 			agentRunId: job.runId,
 			agentId: job.params.agentId,
+			harnessMode: requestedHarnessMode(job.params),
+			harnessModeId: job.params.harnessModeId,
 			hardnessMode: job.params.hardnessMode,
 			message: job.params.message,
 			threadId: job.details.threadId,
@@ -1257,6 +1284,8 @@ function createInitialDetails(params: MastraAgentCallInput): MastraAgentCallDeta
 	return {
 		agentId: params.agentId,
 		modeId: params.modeId,
+		harnessMode: requestedHarnessMode(params),
+		harnessModeId: params.harnessModeId,
 		hardnessMode: params.hardnessMode,
 		prompt: params.message,
 		threadId: params.threadId ?? defaultThreadId(params.agentId),
@@ -1514,6 +1543,8 @@ function formatAsyncStartResult(summary: MastraAgentAsyncJobSummary): string {
 		summary.jobName ? `jobName: ${summary.jobName}` : undefined,
 		`agentId: ${summary.agentId}`,
 		summary.modeId ? `modeId: ${summary.modeId}` : undefined,
+		summary.harnessMode ? `harnessMode: ${summary.harnessMode}` : undefined,
+		summary.harnessModeId ? `harnessModeId: ${summary.harnessModeId}` : undefined,
 		summary.hardnessMode ? `hardnessMode: ${summary.hardnessMode}` : undefined,
 		`threadId: ${summary.threadId}`,
 		`resourceId: ${summary.resourceId}`,
@@ -1545,6 +1576,8 @@ function formatAsyncJobSummary(summary: MastraAgentAsyncJobSummary): string {
 		summary.jobName ? `jobName: ${summary.jobName}` : undefined,
 		`agentId: ${summary.agentId}`,
 		summary.modeId ? `modeId: ${summary.modeId}` : undefined,
+		summary.harnessMode ? `harnessMode: ${summary.harnessMode}` : undefined,
+		summary.harnessModeId ? `harnessModeId: ${summary.harnessModeId}` : undefined,
 		summary.hardnessMode ? `hardnessMode: ${summary.hardnessMode}` : undefined,
 		summary.lifecycleStatus ? `lifecycleStatus: ${summary.lifecycleStatus}` : undefined,
 		`status: ${summary.status}`,
@@ -1629,9 +1662,9 @@ function applyWorkflowLifecycleChunk(details: MastraAgentCallDetails, chunk: unk
 	}
 }
 
-function workflowJobOutput(value: unknown): { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[] } {
+function workflowJobOutput(value: unknown): { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[]; harnessMode?: string; harnessModeId?: string; hardnessMode?: string } {
 	const candidates = objectCandidates(value);
-	let output: { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[] } = {};
+	let output: { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[]; harnessMode?: string; harnessModeId?: string; hardnessMode?: string } = {};
 	for (const candidate of candidates) {
 		const rawStatus = stringField(candidate, "status");
 		const status = rawStatus === "done" || rawStatus === "error" ? rawStatus : undefined;
@@ -1639,6 +1672,9 @@ function workflowJobOutput(value: unknown): { status?: "done" | "error"; text?: 
 			status: output.status ?? status,
 			artifactPath: output.artifactPath ?? stringField(candidate, "artifactPath"),
 			eventsPath: output.eventsPath ?? stringField(candidate, "eventsPath"),
+			harnessMode: output.harnessMode ?? stringField(candidate, "harnessMode"),
+			harnessModeId: output.harnessModeId ?? stringField(candidate, "harnessModeId"),
+			hardnessMode: output.hardnessMode ?? stringField(candidate, "hardnessMode"),
 			text: output.text ?? stringField(candidate, "text") ?? stringField(candidate, "output") ?? stringField(candidate, "textPreview"),
 			errors: output.errors ?? stringArrayField(candidate, "errors"),
 		};

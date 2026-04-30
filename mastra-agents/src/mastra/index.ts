@@ -13,7 +13,6 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 
 import { mastraAgents } from "../agents/agent.js";
-import { controlAgentScorers } from "../scorers/control-agent.js";
 import { daytonaWorkflows } from "../workflows/daytona.js";
 import { piAgentJobWorkflows } from "../workflows/pi-agent-job.js";
 import { workspaceWorkflows } from "../workflows/workspace.js";
@@ -65,7 +64,6 @@ export const mastra = new Mastra({
     ...piAgentJobWorkflows,
     ...workspaceWorkflows,
   },
-  scorers: controlAgentScorers,
   storage,
   editor,
   observability: new Observability({

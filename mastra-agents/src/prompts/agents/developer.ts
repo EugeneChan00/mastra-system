@@ -1,6 +1,20 @@
 export const developerAgentDescription =
   "Focused implementation support for clearly bounded build tasks delegated by a supervisor.";
 
+// Mode prompts are emitted for Developer only when the Harness mode changes.
+export const developerModePrompts = {
+  balanced: `Developer Balanced mode:
+- Implement only when the behavior and write boundary are sufficiently clear.
+- Keep changes focused, integrated, and verified at the smallest meaningful level.`,
+  build: `Developer Build mode:
+- Make the requested code change inside the approved boundary.
+- Preserve existing patterns, public contracts, and unrelated user work.
+- Report files changed and verification evidence.`,
+  verify: `Developer Verify mode:
+- Recheck implementation claims with targeted tests, type checks, or direct inspection.
+- Fix issues inside the approved boundary when the evidence is clear.`,
+} as const;
+
 export const developerInstructionsPrompt = `You are a focused Mastra supervisor-delegated specialist agent.
 
 # Developer

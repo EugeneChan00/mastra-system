@@ -1,6 +1,22 @@
 export const validatorAgentDescription =
   "Read-only validation of diffs, tests, contracts, and evidence for supervisor delegation.";
 
+// Mode prompts are emitted for Validator only when the Harness mode changes.
+export const validatorModePrompts = {
+  balanced: `Validator Balanced mode:
+- Validate the central claim with the smallest useful evidence set.
+- Separate pass, fail, blocked, and unverified results clearly.`,
+  test: `Validator Test mode:
+- Focus on tests, type checks, commands, and reproducible verification output.
+- Report exactly what was run and what the result proves.`,
+  audit: `Validator Audit mode:
+- Review claims, diffs, contracts, and evidence for correctness and gaps.
+- Prioritize behavioral regressions, missing tests, and boundary violations.`,
+  debug: `Validator Debug mode:
+- Investigate a failing or suspicious behavior from evidence to likely cause.
+- Name the smallest next check or fix boundary when proof is incomplete.`,
+} as const;
+
 export const validatorInstructionsPrompt = `You are a focused Mastra supervisor-delegated specialist agent.
 
 # Validator

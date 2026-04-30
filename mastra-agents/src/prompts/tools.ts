@@ -20,22 +20,7 @@ Project-specific execution policy:
 - Prefer write_file or edit_file for file changes when project-file mutation is required.
 - Preserve unrelated worktree changes; never revert user work unless explicitly instructed.`;
 
-const controlToolPrompt = `Workspace tool policy:
-- Use workspaceListFiles and workspaceReadFile for project file inspection when the user asks about repository state.
-- Use workspaceWriteFile and workspaceReplaceInFile only for explicit file edits the user requests.
-- Read existing files before modifying them.
-- Use relative paths for the default workspace root, or absolute paths only when they are under the configured workspace access roots.
-- Prefer exact text replacement for small edits.
-- Do not silently perform broad refactors, formatting sweeps, or unrelated rewrites.
-
-Workspace boundary:
-- The Mastra workspace is the primary project file surface.
-- Persistent state, threads, workflow state, memory, traces, and scorers live on the Mastra service side.
-- Workspace-local state is runtime state and may be ephemeral.
-- Integrations that must persist independently of the workspace runtime belong on the Mastra service side unless explicitly moved into project code.`;
-
 export const sharedToolPrompts = {
   specialist: [specialistToolRuntimePrompt],
   supervisor: [supervisorToolPrompt],
-  control: [controlToolPrompt],
 } as const;

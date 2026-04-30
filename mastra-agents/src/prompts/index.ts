@@ -2,7 +2,6 @@ export * from "./policy.js";
 export * from "./tools.js";
 export * from "./agents/advisor.js";
 export * from "./agents/architect.js";
-export * from "./agents/control.js";
 export * from "./agents/developer.js";
 export * from "./agents/researcher.js";
 export * from "./agents/scout.js";

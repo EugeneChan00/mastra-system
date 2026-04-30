@@ -3,12 +3,13 @@ import { Agent } from "@mastra/core/agent";
 import {
   developerAgentDescription,
   developerInstructionsPrompt,
+  developerModePrompts,
   developerPolicyPrompts,
   developerToolPrompts,
 } from "../prompts/agents/developer.js";
 import { sharedPolicyPrompts } from "../prompts/policy.js";
 import { sharedToolPrompts } from "../prompts/tools.js";
-import { agentDefaultOptions, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
+import { agentDefaultOptions, agentModesFromPrompts, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
 
 export const developerAgent = withAgentModes(new Agent({
   id: "developer-agent",
@@ -24,4 +25,4 @@ export const developerAgent = withAgentModes(new Agent({
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.developer,
-}));
+}), agentModesFromPrompts(developerModePrompts));
