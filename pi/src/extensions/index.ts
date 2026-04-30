@@ -1,18 +1,25 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { matchesKey, Text, type KeyId } from "@mariozechner/pi-tui";
+import { CustomEditor, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type ThemeColor } from "@mariozechner/pi-coding-agent";
+import { matchesKey, Text, type EditorTheme, type KeyId, type TUI as PiTUI } from "@mariozechner/pi-tui";
 import { MASTRA_AGENT_RESULT_MESSAGE_TYPE, MASTRA_STATUS_KEY } from "../const.js";
+import { createHarnessModeMessage, createHarnessModeState, formatHarnessModeStatus, getHarnessModeDefinition, isHarnessMode, type HarnessMode } from "../harness/mode.js";
 import { MastraAsyncAgentManager, MastraHttpClient, createMastraTools } from "../mastra/index.js";
+import { createPiAgentStartupContextMessage } from "../prompts/index.js";
 import { MastraAgentActivityStore, MastraAgentsWidget, MastraAgentsWidgetViewController, type MastraAgentsViewMode } from "../tui/index.js";
 import type { MastraAgentAsyncJobSummary, MastraAgentInfo, MastraWorkflowInfo, MastraWorkflowRun } from "../mastra/index.js";
 import { loadMastraAgentExtensionConfig, type MastraAgentExtensionShortcuts } from "./config.js";
 
 const MASTRA_AGENT_WIDGET_ID = "mastra-agents";
 const LEGACY_MASTRA_AGENT_WIDGET_IDS = [MASTRA_AGENT_WIDGET_ID, "mastra-agents-list", "mastra-agents-region"] as const;
+const HARNESS_MODE_STATUS_KEY = "harness-mode";
+const PI_HARNESS_MODE_STATE_ENTRY_TYPE = "pi-harness-mode-state";
 
 export default function mastraPiExtension(pi: ExtensionAPI) {
 	const client = new MastraHttpClient();
 	const activityStore = new MastraAgentActivityStore();
 	const viewController = new MastraAgentsWidgetViewController();
+	const harnessMode = createHarnessModeState();
+	const startupPromptState = createStartupPromptState();
+	const harnessModePromptMonitor = createHarnessModePromptMonitor();
 	const asyncAgentManager = new MastraAsyncAgentManager(client, {
 		activitySink: activityStore,
 		useWorkflowJobs: false,
@@ -36,6 +43,18 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	let unmountMastraWidget: (() => void) | undefined;
 	let uninstallMastraWidgetShortcuts: (() => void) | undefined;
 	let statusLabel = "offline";
+
+	pi.on("before_agent_start", async () => {
+		const message = startupPromptState.nextMessage();
+		return message ? { message } : undefined;
+	});
+
+	pi.on("before_agent_start", async () => {
+		const mode = harnessMode.get();
+		const message = harnessModePromptMonitor.nextMessage(mode);
+		if (message) persistHarnessModeSessionState(pi, mode, mode);
+		return message ? { message } : undefined;
+	});
 
 	for (const tool of createMastraTools(client, { agentActivitySink: activityStore, asyncAgentManager })) {
 		pi.registerTool(tool as any);
@@ -100,6 +119,10 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		startupPromptState.reset();
+		const persistedHarnessMode = readHarnessModeSessionState(ctx.sessionManager.getEntries());
+		if (persistedHarnessMode?.selectedMode) harnessMode.set(persistedHarnessMode.selectedMode);
+		harnessModePromptMonitor.reset(persistedHarnessMode?.lastSubmittedMode);
 		unsubscribeActivityStatus?.();
 		uninstallMastraWidgetShortcuts?.();
 		unmountMastraWidget?.();
@@ -118,6 +141,20 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 			uninstallMastraWidgetShortcuts = installMastraWidgetTerminalShortcuts(ctx.ui, widgetConfig.shortcuts, viewController, activityStore);
 			if (widgetConfig.warning) ctx.ui.notify(widgetConfig.warning, "warning");
 			if (widgetConfig.debugPiRedraw && process.env.PI_DEBUG_REDRAW === undefined) process.env.PI_DEBUG_REDRAW = "1";
+			syncHarnessModeStatus(ctx, harnessMode.get());
+			ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+				return new HarnessModeEditor(tui, theme, keybindings, {
+					getMode: () => harnessMode.get(),
+					cycleMode: () => {
+						const mode = harnessMode.cycle();
+						persistHarnessModeSessionState(pi, mode, harnessModePromptMonitor.getLastSubmittedMode());
+						syncHarnessModeStatus(ctx, mode);
+						ctx.ui.notify(formatHarnessModeStatus(mode), "info");
+						return mode;
+					},
+					colorizeMode: (mode, text) => ctx.ui.theme.fg(harnessModeThemeColor(mode), text),
+				});
+			});
 			for (const widgetId of LEGACY_MASTRA_AGENT_WIDGET_IDS) ctx.ui.setWidget(widgetId, undefined);
 			let widgetMounted = false;
 			const mountWidget = () => {
@@ -167,6 +204,8 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		startupPromptState.reset();
+		harnessModePromptMonitor.reset();
 		asyncAgentManager.detachAll("Pi session shutdown");
 		unmountMastraWidget?.();
 		unmountMastraWidget = undefined;
@@ -175,6 +214,138 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 		unsubscribeActivityStatus?.();
 		unsubscribeActivityStatus = undefined;
 	});
+}
+
+interface HarnessModeSessionState {
+	version: 1;
+	selectedMode: HarnessMode;
+	lastSubmittedMode?: HarnessMode;
+}
+
+function persistHarnessModeSessionState(pi: Pick<ExtensionAPI, "appendEntry">, selectedMode: HarnessMode, lastSubmittedMode: HarnessMode | undefined): void {
+	const state: HarnessModeSessionState = {
+		version: 1,
+		selectedMode,
+		...(lastSubmittedMode ? { lastSubmittedMode } : {}),
+	};
+	pi.appendEntry(PI_HARNESS_MODE_STATE_ENTRY_TYPE, state);
+}
+
+function readHarnessModeSessionState(entries: readonly unknown[]): HarnessModeSessionState | undefined {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index] as { type?: unknown; customType?: unknown; data?: unknown } | undefined;
+		if (entry?.type !== "custom" || entry.customType !== PI_HARNESS_MODE_STATE_ENTRY_TYPE) continue;
+		const data = entry.data as Partial<HarnessModeSessionState> | undefined;
+		if (!data || data.version !== 1 || !isHarnessMode(data.selectedMode)) continue;
+		return {
+			version: 1,
+			selectedMode: data.selectedMode,
+			...(isHarnessMode(data.lastSubmittedMode) ? { lastSubmittedMode: data.lastSubmittedMode } : {}),
+		};
+	}
+	return undefined;
+}
+
+function createStartupPromptState(): {
+	reset(): void;
+	nextMessage(): ReturnType<typeof createPiAgentStartupContextMessage> | undefined;
+} {
+	let emitted = false;
+	return {
+		reset() {
+			emitted = false;
+		},
+		nextMessage() {
+			if (emitted) return undefined;
+			emitted = true;
+			return createPiAgentStartupContextMessage();
+		},
+	};
+}
+
+function createHarnessModePromptMonitor(): {
+	reset(lastSubmittedMode?: HarnessMode): void;
+	getLastSubmittedMode(): HarnessMode | undefined;
+	nextMessage(mode: HarnessMode): ReturnType<typeof createHarnessModeMessage> | undefined;
+} {
+	// This is checked at user prompt submission boundaries via before_agent_start.
+	// UI mode changes while an agent is already running are observed on the next
+	// submitted prompt, not as live tool-call-time prompt injections.
+	let previousSubmittedMode: HarnessMode | undefined;
+	return {
+		reset(lastSubmittedMode) {
+			previousSubmittedMode = lastSubmittedMode;
+		},
+		getLastSubmittedMode() {
+			return previousSubmittedMode;
+		},
+		nextMessage(mode) {
+			if (previousSubmittedMode === mode) return undefined;
+			previousSubmittedMode = mode;
+			return createHarnessModeMessage(mode);
+		},
+	};
+}
+
+interface HarnessModeEditorOptions {
+	getMode(): HarnessMode;
+	cycleMode(): HarnessMode;
+	colorizeMode(mode: HarnessMode, text: string): string;
+}
+
+class HarnessModeEditor extends CustomEditor {
+	constructor(
+		tui: PiTUI,
+		theme: EditorTheme,
+		private readonly harnessKeybindings: KeybindingsManager,
+		private readonly options: HarnessModeEditorOptions,
+	) {
+		super(tui, theme, harnessKeybindings);
+	}
+
+	handleInput(data: string): void {
+		if (this.harnessKeybindings.matches(data, "app.thinking.cycle")) {
+			this.options.cycleMode();
+			this.tui.requestRender();
+			return;
+		}
+		super.handleInput(data);
+	}
+
+	render(width: number): string[] {
+		const previousBorderColor = this.borderColor;
+		const mode = this.options.getMode();
+		const color = (text: string) => this.options.colorizeMode(mode, text);
+		this.borderColor = color;
+		try {
+			const lines = super.render(width);
+			if (lines.length > 0) lines[0] = renderHarnessModeBorder(formatHarnessModeStatus(mode), width, color);
+			return lines;
+		} finally {
+			this.borderColor = previousBorderColor;
+		}
+	}
+}
+
+function renderHarnessModeBorder(label: string, width: number, color: (text: string) => string): string {
+	if (width <= 0) return "";
+	if (width === 1) return color("─");
+	const framedLabel = ` ${label} `;
+	const visibleLabel = framedLabel.length > width - 2 ? framedLabel.slice(0, Math.max(0, width - 2)) : framedLabel;
+	const remaining = Math.max(0, width - 1 - visibleLabel.length);
+	return color(`─${visibleLabel}${"─".repeat(remaining)}`);
+}
+
+function syncHarnessModeStatus(ctx: Pick<ExtensionContext, "ui">, mode: HarnessMode): void {
+	ctx.ui.setStatus(HARNESS_MODE_STATUS_KEY, ctx.ui.theme.fg(harnessModeThemeColor(mode), formatHarnessModeStatus(mode)));
+}
+
+function harnessModeThemeColor(mode: HarnessMode): ThemeColor {
+	const highlight = getHarnessModeDefinition(mode).highlightColor;
+	if (highlight === "yellow") return "warning";
+	if (highlight === "magenta") return "customMessageLabel";
+	if (highlight === "cyan") return "accent";
+	return "borderAccent";
 }
 
 function installMastraWidgetTerminalShortcuts(
