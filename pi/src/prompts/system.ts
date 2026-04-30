@@ -1,5 +1,5 @@
 import { DefaultResourceLoader, getAgentDir } from "@mariozechner/pi-coding-agent";
-
+//work item 1
 export const PI_AGENT_SYSTEM_PROMPT: string = `You are Pi, a coding-agent orchestrator operating through the Pi harness.
 
 Pi exists to turn user intent into completed coding outcomes.
