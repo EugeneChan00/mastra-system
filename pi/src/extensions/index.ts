@@ -1,19 +1,27 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import { Text, type KeyId } from "@mariozechner/pi-tui";
 import { MASTRA_AGENT_RESULT_MESSAGE_TYPE, MASTRA_STATUS_KEY } from "../const.js";
 import { MastraAsyncAgentManager, MastraHttpClient, createMastraTools } from "../mastra/index.js";
-import { MastraAgentActivityStore, MastraAgentsWidget } from "../tui/index.js";
+import { MastraAgentActivityStore, MastraAgentsWidget, MastraAgentsWidgetViewController, type MastraAgentsViewMode } from "../tui/index.js";
 import type { MastraAgentAsyncJobSummary, MastraAgentInfo, MastraWorkflowInfo, MastraWorkflowRun } from "../mastra/index.js";
+import { loadMastraAgentExtensionConfig, loadMastraAgentExtensionConfigSync, type MastraAgentExtensionShortcuts } from "./config.js";
+
+const MASTRA_AGENT_WIDGET_ID = "mastra-agents";
+const LEGACY_MASTRA_AGENT_WIDGET_IDS = [MASTRA_AGENT_WIDGET_ID, "mastra-agents-list", "mastra-agents-region"] as const;
 
 export default function mastraPiExtension(pi: ExtensionAPI) {
 	const client = new MastraHttpClient();
 	const activityStore = new MastraAgentActivityStore();
+	const startupWidgetConfig = loadMastraAgentExtensionConfigSync(process.cwd());
+	const viewController = new MastraAgentsWidgetViewController(startupWidgetConfig.defaultViewMode);
 	const asyncAgentManager = new MastraAsyncAgentManager(client, {
 		activitySink: activityStore,
+		useWorkflowJobs: false,
 		onComplete: (summary) => {
 			// Live deltas stay in MastraAgentsWidget; only the final summary becomes a
-			// transcript message. triggerTurn wakes the parent agent if the async job
-			// finishes after the original Pi turn has gone idle.
+			// transcript reminder. "steer" queues it as a system reminder as soon as
+			// Pi can accept context between tool calls; message_end is the ack that
+			// collapses the card.
 			pi.sendMessage(
 				{
 					customType: MASTRA_AGENT_RESULT_MESSAGE_TYPE,
@@ -21,12 +29,15 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 					display: true,
 					details: summary,
 				},
-				{ deliverAs: "followUp", triggerTurn: true },
+				{ deliverAs: "steer", triggerTurn: true },
 			);
 		},
 	});
 	let unsubscribeActivityStatus: (() => void) | undefined;
+	let unmountMastraWidget: (() => void) | undefined;
 	let statusLabel = "offline";
+
+	registerMastraWidgetShortcuts(pi, startupWidgetConfig.shortcuts, viewController, activityStore);
 
 	for (const tool of createMastraTools(client, { agentActivitySink: activityStore, asyncAgentManager })) {
 		pi.registerTool(tool as any);
@@ -92,11 +103,46 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		unsubscribeActivityStatus?.();
+		unmountMastraWidget?.();
+		unmountMastraWidget = undefined;
+		const piSessionId = ctx.sessionManager.getSessionId();
+		asyncAgentManager.configureSession({
+			piSessionId,
+			cwd: ctx.cwd,
+			isCompletionAcknowledged: (jobId) => hasCompletionReminder(ctx.sessionManager.getEntries(), jobId),
+		});
+		let syncMastraWidget = () => undefined;
 		if (ctx.hasUI) {
-			ctx.ui.setWidget("mastra-agents", (tui, theme) => new MastraAgentsWidget(tui, theme, activityStore), { placement: "aboveEditor" });
+			const widgetConfig = await loadMastraAgentExtensionConfig(ctx.cwd);
+			viewController.setMode(widgetConfig.defaultViewMode);
+			if (widgetConfig.warning) ctx.ui.notify(widgetConfig.warning, "warning");
+			if (widgetConfig.debugPiRedraw && process.env.PI_DEBUG_REDRAW === undefined) process.env.PI_DEBUG_REDRAW = "1";
+			for (const widgetId of LEGACY_MASTRA_AGENT_WIDGET_IDS) ctx.ui.setWidget(widgetId, undefined);
+			let widgetMounted = false;
+			const mountWidget = () => {
+				if (widgetMounted) return;
+				ctx.ui.setWidget(
+					MASTRA_AGENT_WIDGET_ID,
+					(tui, theme) => new MastraAgentsWidget(tui, theme, activityStore, { ...widgetConfig.options, fixedRegion: true, viewController }),
+					{ placement: "aboveEditor" },
+				);
+				widgetMounted = true;
+			};
+			const unmountWidget = () => {
+				if (!widgetMounted) return;
+				ctx.ui.setWidget(MASTRA_AGENT_WIDGET_ID, undefined);
+				widgetMounted = false;
+			};
+			syncMastraWidget = () => {
+				if (activityStore.hasVisibleActivity()) mountWidget();
+				else unmountWidget();
+			};
+			unmountMastraWidget = unmountWidget;
+			syncMastraWidget();
 		}
 		unsubscribeActivityStatus = activityStore.subscribe(() => {
 			const running = activityStore.snapshot({ includeFinished: false }).length;
+			syncMastraWidget();
 			ctx.ui.setStatus(MASTRA_STATUS_KEY, running > 0 ? `mastra: ${running} running` : `mastra: ${statusLabel}`);
 		});
 
@@ -108,13 +154,60 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 			statusLabel = "offline";
 			ctx.ui.setStatus(MASTRA_STATUS_KEY, "mastra: offline");
 		}
+
+		void asyncAgentManager.restoreSessionJobs().catch(() => undefined);
+	});
+
+	pi.on("message_end", async (event) => {
+		const jobId = completionJobIdFromMessageEnd(event);
+		if (jobId) asyncAgentManager.markEnded(jobId);
 	});
 
 	pi.on("session_shutdown", async () => {
-		asyncAgentManager.cancelAll("Pi session shutdown", { suppressCompletionMessage: true });
+		asyncAgentManager.detachAll("Pi session shutdown");
+		unmountMastraWidget?.();
+		unmountMastraWidget = undefined;
 		unsubscribeActivityStatus?.();
 		unsubscribeActivityStatus = undefined;
 	});
+}
+
+function registerMastraWidgetShortcuts(
+	pi: ExtensionAPI,
+	shortcuts: MastraAgentExtensionShortcuts,
+	viewController: MastraAgentsWidgetViewController,
+	activityStore: MastraAgentActivityStore,
+): void {
+	const registered = new Set<string>();
+	const register = (shortcut: string, description: string, handler: Parameters<ExtensionAPI["registerShortcut"]>[1]["handler"]) => {
+		if (registered.has(shortcut)) return;
+		registered.add(shortcut);
+		pi.registerShortcut(shortcut as KeyId, { description, handler });
+	};
+
+	register(shortcuts.viewMode, "Cycle Mastra agent widget view", (ctx) => {
+		const mode = viewController.cycleMode();
+		if (mode === "detail") viewController.focusNext(activityStore.snapshot({ includeFinished: false }), 0);
+		ctx.ui.notify(`Mastra agents: ${formatViewMode(mode)}`, "info");
+	});
+
+	register(shortcuts.nextAgent, "Focus next Mastra agent in detail view", (ctx) => {
+		viewController.setMode("detail");
+		const activity = viewController.focusNext(activityStore.snapshot({ includeFinished: false }), 1);
+		ctx.ui.notify(activity ? `Mastra detail: ${activity.agentId}` : "No Mastra agent jobs", "info");
+	});
+
+	register(shortcuts.previousAgent, "Focus previous Mastra agent in detail view", (ctx) => {
+		viewController.setMode("detail");
+		const activity = viewController.focusNext(activityStore.snapshot({ includeFinished: false }), -1);
+		ctx.ui.notify(activity ? `Mastra detail: ${activity.agentId}` : "No Mastra agent jobs", "info");
+	});
+}
+
+function formatViewMode(mode: MastraAgentsViewMode): string {
+	if (mode === "cards") return "card region";
+	if (mode === "detail") return "detail region";
+	return "compact list";
 }
 
 async function showStatus(client: MastraHttpClient, ctx: ExtensionCommandContext): Promise<void> {
@@ -218,18 +311,49 @@ function formatWorkflowRun(run: MastraWorkflowRun): string {
 		.join("\n");
 }
 
-function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary): string {
+export function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary): string {
 	const lines = [
-		`Async Mastra agent job completed: ${summary.jobId}`,
+		"<system-reminder>",
+		`Asynchronous Mastra agent task completed: ${summary.jobId}`,
+		summary.jobName ? `jobName: ${summary.jobName}` : undefined,
 		`agentId: ${summary.agentId}`,
 		`status: ${summary.status}`,
+		summary.lifecycleStatus ? `lifecycleStatus: ${summary.lifecycleStatus}` : undefined,
+		summary.terminalReason ? `terminalReason: ${summary.terminalReason}` : undefined,
+		summary.incomplete ? "incomplete: true" : undefined,
 		summary.elapsedMs !== undefined ? `elapsed: ${formatDuration(summary.elapsedMs)}` : undefined,
 		summary.toolCalls + summary.toolResults > 0 ? `tools: ${summary.toolCalls + summary.toolResults}` : undefined,
+		summary.threadId ? `threadId: ${summary.threadId}` : undefined,
+		summary.runId ? `runId: ${summary.runId}` : undefined,
 		summary.artifactPath ? `artifactPath: ${summary.artifactPath}` : undefined,
 		`Use agent_read with jobId=${summary.jobId} before finalizing unless the initial user prompt explicitly said "pass the output" or "don't read the output".`,
+		summary.artifactPath ? "The artifactPath can be passed as an input_args value to another Mastra agent when chaining work." : undefined,
 		summary.errors.length > 0 ? `errors: ${summary.errors.join("; ")}` : undefined,
+		"</system-reminder>",
 	];
 	return lines.filter(Boolean).join("\n");
+}
+
+export function completionJobIdFromMessageEnd(event: unknown): string | undefined {
+	if (typeof event !== "object" || event === null) return undefined;
+	const message = (event as { message?: unknown }).message;
+	if (typeof message !== "object" || message === null) return undefined;
+	const record = message as { role?: unknown; customType?: unknown; details?: unknown };
+	if (record.role !== "custom" || record.customType !== MASTRA_AGENT_RESULT_MESSAGE_TYPE) return undefined;
+	const details = record.details;
+	if (typeof details !== "object" || details === null) return undefined;
+	const jobId = (details as { jobId?: unknown }).jobId;
+	return typeof jobId === "string" && jobId.length > 0 ? jobId : undefined;
+}
+
+export function hasCompletionReminder(entries: readonly unknown[], jobId: string): boolean {
+	return entries.some((entry) => {
+		if (typeof entry !== "object" || entry === null) return false;
+		const record = entry as Record<string, unknown>;
+		if (record.type !== "custom_message" || record.customType !== MASTRA_AGENT_RESULT_MESSAGE_TYPE) return false;
+		const details = record.details;
+		return typeof details === "object" && details !== null && (details as { jobId?: unknown }).jobId === jobId;
+	});
 }
 
 function formatDuration(ms: number): string {

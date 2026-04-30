@@ -62,6 +62,14 @@ test("sets final status and usage on finish", () => {
 	applyNormalizedEvent(details, normalizeMastraChunk({ type: "finish", usage: { totalTokens: 42 } }));
 	assert.equal(details.status, "done");
 	assert.equal(details.usage?.totalTokens, 42);
+	assert.equal(details.terminalReason, "finish");
+});
+
+test("does not treat step-finish as a terminal job finish", () => {
+	const details = makeDetails();
+	applyNormalizedEvent(details, normalizeMastraChunk({ type: "step-finish", usage: { totalTokens: 42 } }));
+	assert.equal(details.status, "running");
+	assert.equal(details.terminalReason, undefined);
 });
 
 test("records stream errors", () => {
@@ -69,6 +77,7 @@ test("records stream errors", () => {
 	applyNormalizedEvent(details, normalizeMastraChunk({ type: "error", message: "boom" }));
 	assert.equal(details.status, "error");
 	assert.deepEqual(details.errors, ["boom"]);
+	assert.equal(details.terminalReason, "error");
 });
 
 test("truncates text deterministically", () => {

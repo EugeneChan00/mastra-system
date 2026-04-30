@@ -1,5 +1,8 @@
 {
   "extensions": [
     "../pi/src/extensions/index.ts"
-  ]
+  ],
+  "terminal": {
+    "clearOnShrink": false
+  }
 }

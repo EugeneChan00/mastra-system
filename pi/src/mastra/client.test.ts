@@ -118,6 +118,90 @@ test("streamWorkflow posts workflow payload and yields parsed chunks until DONE"
 	assert.equal(requestBody, JSON.stringify({ inputData: { hello: "world" } }));
 });
 
+test("observeWorkflow posts observe payload and yields parsed chunks until DONE", async () => {
+	let requestUrl = "";
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			const encoder = new TextEncoder();
+			controller.enqueue(encoder.encode('data: {"type":"workflow-step-output","payload":{"output":{"type":"text-delta","payload":{"text":"hi"}}}}\n\n'));
+			controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+			controller.close();
+		},
+	});
+	const client = new MastraHttpClient({
+		fetchImpl: async (url) => {
+			requestUrl = String(url);
+			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+		},
+	});
+
+	const chunks = [];
+	for await (const chunk of client.observeWorkflow("pi.agent-job", "run-1", { resourceId: "resource" })) {
+		chunks.push(chunk);
+	}
+	assert.equal(chunks.length, 1);
+	assert.match(requestUrl, /\/workflows\/pi\.agent-job\/observe\?runId=run-1$/);
+});
+
+test("listWorkflowRuns parses runs wrapper and forwards resourceId", async () => {
+	let requestUrl = "";
+	const client = new MastraHttpClient({
+		fetchImpl: async (url) => {
+			requestUrl = String(url);
+			return new Response(JSON.stringify({ runs: [{ workflowName: "pi.agent-job", runId: "run-1", status: "running" }] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		},
+	});
+
+	const runs = await client.listWorkflowRuns("pi.agent-job", { resourceId: "pi:abc" });
+	assert.equal(runs[0].runId, "run-1");
+	assert.match(requestUrl, /\/workflows\/pi\.agent-job\/runs\?resourceId=pi%3Aabc$/);
+});
+
+test("listWorkflowRuns normalizes Mastra snapshot entries", async () => {
+	const client = new MastraHttpClient({
+		fetchImpl: async () => {
+			return new Response(
+				JSON.stringify({
+					runs: [
+						{
+							workflowName: "pi.agent-job",
+							runId: "canonical-run",
+							resourceId: "resource",
+							snapshot: JSON.stringify({
+								status: "success",
+								context: { input: { jobId: "job", piSessionId: "session" } },
+								result: { status: "error", text: "partial", errors: ["agent failed"] },
+							}),
+						},
+					],
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		},
+	});
+
+	const runs = await client.listWorkflowRuns("pi.agent-job");
+	assert.equal(runs[0].status, "success");
+	assert.deepEqual(runs[0].payload, { jobId: "job", piSessionId: "session" });
+	assert.deepEqual(runs[0].result, { status: "error", text: "partial", errors: ["agent failed"] });
+});
+
+test("cancelWorkflowRun posts cancel endpoint", async () => {
+	let requestUrl = "";
+	const client = new MastraHttpClient({
+		fetchImpl: async (url) => {
+			requestUrl = String(url);
+			return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+		},
+	});
+
+	await client.cancelWorkflowRun("pi.agent-job", "run-1");
+	assert.match(requestUrl, /\/workflows\/pi\.agent-job\/runs\/run-1\/cancel$/);
+});
+
 test("streamAgent honors pre-aborted signals before fetch", async () => {
 	const abortController = new AbortController();
 	abortController.abort(new Error("already cancelled"));

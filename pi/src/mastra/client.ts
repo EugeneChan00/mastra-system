@@ -4,7 +4,10 @@ import {
 	agentsPath,
 	agentStreamPath,
 	workflowPath,
+	workflowCancelRunPath,
+	workflowObservePath,
 	workflowRunPath,
+	workflowRunsPath,
 	workflowsPath,
 	workflowStreamPath,
 } from "../const.js";
@@ -15,6 +18,7 @@ import type {
 	MastraStreamRequest,
 	MastraWorkflowInfo,
 	MastraWorkflowRun,
+	MastraWorkflowRunsListInput,
 	MastraWorkflowStreamRequest,
 	MastraWorkflowsResponse,
 } from "./types.js";
@@ -79,7 +83,36 @@ export class MastraHttpClient {
 		if (!isRecord(body)) {
 			throw new Error("Mastra workflow run response was not an object");
 		}
-		return body as MastraWorkflowRun;
+		return normalizeWorkflowRun(body as MastraWorkflowRun);
+	}
+
+	async listWorkflowRuns(
+		workflowId: string,
+		options: MastraWorkflowRunsListInput & { signal?: AbortSignal } = {},
+	): Promise<MastraWorkflowRun[]> {
+		const body = await this.getJson(
+			workflowRunsPath(workflowId, options),
+			"Mastra workflow runs request failed",
+			options.signal,
+		);
+		if (Array.isArray(body)) return body.map((run) => normalizeWorkflowRun(run as MastraWorkflowRun));
+		if (isRecord(body) && Array.isArray(body.runs)) {
+			return body.runs.map((run) => normalizeWorkflowRun(run as MastraWorkflowRun));
+		}
+		throw new Error("Mastra workflow runs response was not an array");
+	}
+
+	async cancelWorkflowRun(
+		workflowId: string,
+		runId: string,
+		options: { signal?: AbortSignal } = {},
+	): Promise<unknown> {
+		return this.postJson(
+			workflowCancelRunPath(workflowId, runId),
+			{},
+			"Mastra workflow cancel request failed",
+			options.signal,
+		);
 	}
 
 	async *streamWorkflow(
@@ -92,6 +125,20 @@ export class MastraHttpClient {
 			workflowStreamPath(workflowId, runId),
 			payload,
 			"Mastra workflow stream request failed",
+			options,
+		);
+	}
+
+	async *observeWorkflow(
+		workflowId: string,
+		runId: string,
+		payload: MastraWorkflowStreamRequest = {},
+		options: { signal?: AbortSignal; timeoutMs?: number } = {},
+	): AsyncGenerator<unknown> {
+		yield* this.streamJsonEvents(
+			workflowObservePath(workflowId, runId),
+			payload,
+			"Mastra workflow observe request failed",
 			options,
 		);
 	}
@@ -115,6 +162,26 @@ export class MastraHttpClient {
 		}
 
 		return (await response.json()) as unknown;
+	}
+
+	private async postJson(path: string, payload: unknown, errorPrefix: string, signal?: AbortSignal): Promise<unknown> {
+		const response = await this.fetchImpl(joinMastraPath(this.baseUrl, path), {
+			method: "POST",
+			headers: {
+				accept: "application/json",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify(payload),
+			signal,
+		});
+
+		if (!response.ok) {
+			throw new Error(`${errorPrefix}: ${response.status} ${response.statusText}: ${await response.text()}`);
+		}
+
+		const text = await response.text();
+		if (!text.trim()) return {};
+		return JSON.parse(text) as unknown;
 	}
 
 	private async *streamJsonEvents(
@@ -181,4 +248,51 @@ export class MastraHttpClient {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeWorkflowRun(run: MastraWorkflowRun): MastraWorkflowRun {
+	const snapshot = parseWorkflowSnapshot(run.snapshot);
+	if (!snapshot) return run;
+	const normalized: MastraWorkflowRun = { ...run };
+	const status = stringField(run, "status") ?? stringField(snapshot, "status") ?? workflowSnapshotCurrentState(snapshot);
+	if (status) normalized.status = status;
+	if (normalized.result === undefined && "result" in snapshot) normalized.result = snapshot.result;
+	if (normalized.error === undefined && "error" in snapshot) normalized.error = snapshot.error;
+	if (normalized.payload === undefined) {
+		normalized.payload = workflowSnapshotInput(snapshot);
+	}
+	if (normalized.initialState === undefined && "value" in snapshot) normalized.initialState = snapshot.value;
+	if (normalized.serializedStepGraph === undefined && Array.isArray(snapshot.serializedStepGraph)) {
+		normalized.serializedStepGraph = snapshot.serializedStepGraph as Array<Record<string, unknown>>;
+	}
+	return normalized;
+}
+
+function parseWorkflowSnapshot(value: unknown): Record<string, unknown> | undefined {
+	if (isRecord(value)) return value;
+	if (typeof value !== "string") return undefined;
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return isRecord(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function workflowSnapshotInput(snapshot: Record<string, unknown>): unknown {
+	const context = snapshot.context;
+	if (isRecord(context) && "input" in context) return context.input;
+	if ("input" in snapshot) return snapshot.input;
+	return undefined;
+}
+
+function workflowSnapshotCurrentState(snapshot: Record<string, unknown>): string | undefined {
+	const value = snapshot.value;
+	if (isRecord(value)) return stringField(value, "currentState");
+	return undefined;
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+	const value = record[key];
+	return typeof value === "string" ? value : undefined;
 }
