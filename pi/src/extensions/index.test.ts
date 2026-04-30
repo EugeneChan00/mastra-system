@@ -80,6 +80,115 @@ test("hasCompletionReminder matches persisted custom completion entries by job i
 	assert.equal(hasCompletionReminder(entries, "job-2"), true);
 });
 
+test("before_agent_start injects hidden harness mode context without mutating system prompt", async () => {
+	const handlers = new Map<string, (...args: any[]) => unknown>();
+	const pi = {
+		registerTool() {},
+		registerMessageRenderer() {},
+		registerCommand() {},
+		registerShortcut() {},
+		on(event: string, handler: (...args: any[]) => unknown) {
+			handlers.set(event, handler);
+		},
+		sendMessage() {},
+	};
+	mastraPiExtension(pi as any);
+
+	const beforeAgentStart = handlers.get("before_agent_start");
+	assert.equal(typeof beforeAgentStart, "function");
+	const result = (await beforeAgentStart?.(
+		{ prompt: "visible user prompt", systemPrompt: "base system prompt", systemPromptOptions: {} },
+		{},
+	)) as any;
+
+	assert.equal(result.systemPrompt, undefined);
+	assert.equal(result.message.customType, "mastra-harness-mode");
+	assert.equal(result.message.display, false);
+	assert.match(result.message.content, /\[HARNESS MODE: BALANCED\]/);
+});
+
+test("Shift+Tab cycles harness mode and updates status/editor highlight", async () => {
+	const originalFetch = globalThis.fetch;
+	const handlers = new Map<string, (...args: any[]) => unknown>();
+	const statusCalls: Array<{ key: string; value: string }> = [];
+	const notifications: string[] = [];
+	let editorFactory: ((tui: any, theme: any, keybindings: any) => any) | undefined;
+
+	globalThis.fetch = (async (url: Parameters<typeof fetch>[0]) => {
+		const requestUrl = String(url);
+		if (requestUrl.endsWith("/agents?partial=true")) {
+			return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
+		}
+		if (requestUrl.endsWith("/workflows?partial=true")) {
+			return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
+		}
+		if (requestUrl.includes(`/workflows/${encodeURIComponent(MASTRA_PI_AGENT_JOB_WORKFLOW_ID)}/runs?`)) {
+			return new Response(JSON.stringify({ runs: [] }), { status: 200, headers: { "content-type": "application/json" } });
+		}
+		return new Response("not found", { status: 404, statusText: "Not Found" });
+	}) as typeof fetch;
+
+	try {
+		const pi = {
+			registerTool() {},
+			registerMessageRenderer() {},
+			registerCommand() {},
+			registerShortcut() {},
+			on(event: string, handler: (...args: any[]) => unknown) {
+				handlers.set(event, handler);
+			},
+			sendMessage() {},
+		};
+		mastraPiExtension(pi as any);
+
+		const sessionStart = handlers.get("session_start");
+		assert.equal(typeof sessionStart, "function");
+		await sessionStart?.(
+			{},
+			{
+				cwd: "/workspace/project",
+				hasUI: true,
+				sessionManager: {
+					getSessionId: () => "session-harness",
+					getEntries: () => [],
+				},
+				ui: {
+					theme: stubTheme,
+					notify(message: string) {
+						notifications.push(message);
+					},
+					setEditorComponent(factory: typeof editorFactory) {
+						editorFactory = factory;
+					},
+					setWidget() {},
+					setStatus(key: string, value: string) {
+						statusCalls.push({ key, value });
+					},
+				},
+			},
+		);
+
+		assert.equal(typeof editorFactory, "function");
+		assert.ok(statusCalls.some((call) => call.key === "harness-mode" && call.value === "Mode: balanced"));
+
+		let renderRequests = 0;
+		const editor = editorFactory!(
+			{ requestRender: () => renderRequests++, terminal: { rows: 30 } },
+			{ borderColor: (text: string) => text, selectList: {} },
+			{ matches: (data: string, key: string) => data === "shift+tab" && key === "app.thinking.cycle" },
+		);
+
+		editor.handleInput("shift+tab");
+
+		assert.equal(renderRequests, 1);
+		assert.ok(notifications.includes("Mode: precision"));
+		assert.ok(statusCalls.some((call) => call.key === "harness-mode" && call.value === "Mode: precision"));
+		assert.ok(editor.render(40).some((line: string) => line.includes("Mode: precision")));
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
 test("extension queues async agent completion as steer reminder and message_end collapses activity", async () => {
 	const originalFetch = globalThis.fetch;
 	const registeredTools: any[] = [];
@@ -183,7 +292,9 @@ test("extension queues async agent completion as steer reminder and message_end 
 					getEntries: () => [],
 				},
 				ui: {
+					theme: stubTheme,
 					notify() {},
+					setEditorComponent() {},
 					setWidget(id: string, factory: ((tui: any, theme: any) => any) | undefined, options?: { placement?: string }) {
 						widgetCalls.push({ id, hasFactory: typeof factory === "function", placement: options?.placement });
 						if (factory) widgetFactories.set(id, factory);
