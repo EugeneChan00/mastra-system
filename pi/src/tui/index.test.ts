@@ -497,6 +497,40 @@ test("MastraAgentCard stream-only tool output keeps markdown body at normal cont
 	assert.equal(joined.includes("**bold**"), false);
 });
 
+test("MastraAgentCard renders prompt body with configured highlight color", () => {
+	const details = makeDetails({
+		prompt: "Inspect the failing test and explain the fix.",
+		text: "answer",
+	});
+	const card = new MastraAgentCard(details, { expanded: true, fixedTotalLines: 18 }, markerTheme as any);
+	const joined = card.render(120).join("\n");
+
+	assert.ok(joined.includes("<text>Prompt</text>"), "prompt label should use the normal foreground");
+	assert.ok(joined.includes("<syntaxString>Inspect the failing test and explain the fix.</syntaxString>"), "prompt body should use the prompt highlight");
+	assert.equal(joined.includes("<dim>Inspect the failing test"), false, "prompt body should not be tertiary grey");
+});
+
+test("MastraAgentCard applies configured tool and reasoning colors", () => {
+	const details = makeDetails({
+		text: "answer",
+		reasoning: "Reasoning says **bold**",
+		toolCalls: [{ id: "tool-1", name: "workspaceReadFile", type: "call", args: { path: "README.md" }, timestamp: 1, raw: {} }],
+		toolResults: [{ id: "tool-1", name: "workspaceReadFile", type: "result", args: { path: "README.md" }, result: "Tool says **bold**", timestamp: 2, raw: {} }],
+	});
+	const card = new MastraAgentCard(
+		details,
+		{ expanded: true, fixedTotalLines: 28, colors: { prompt: "error", tool: "warning", reasoning: "success" } },
+		markerTheme as any,
+	);
+	const joined = card.render(120).join("\n");
+
+	assert.ok(joined.includes("<text>read_file</text>"), "tool event names should use the normal foreground");
+	assert.ok(joined.includes("<text>→</text>"), "tool call marker should use the normal foreground");
+	assert.ok(joined.includes("<warning>path=README.md</warning>"), "tool details should use the configured tool color");
+	assert.ok(joined.includes("<text>Reasoning</text>"), "reasoning label should use the normal foreground");
+	assert.ok(joined.includes("<success>Reasoning says"), "reasoning body should use the configured reasoning color");
+});
+
 test("MastraAgentCard renders reasoning through markdown in expanded mode", () => {
 	const details = makeDetails({
 		text: "answer",

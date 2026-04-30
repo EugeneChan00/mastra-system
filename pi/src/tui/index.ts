@@ -21,6 +21,18 @@ const DETAIL_SCROLL_STEP_ROWS = 5;
 const MAX_DETAIL_SCROLL_OFFSET_ROWS = 5_000;
 const DEFAULT_ACTIVITY_LINGER_MS = 12_000;
 const ERROR_ACTIVITY_LINGER_MS = 30_000;
+export interface MastraAgentWidgetColors {
+	prompt?: ThemeColor;
+	tool?: ThemeColor;
+	reasoning?: ThemeColor;
+}
+// These roles color payload/detail text only. Labels and tool names stay on the
+// normal foreground so the card hierarchy remains stable while streams update.
+export const DEFAULT_MASTRA_AGENT_WIDGET_COLORS: Required<MastraAgentWidgetColors> = {
+	prompt: "syntaxString",
+	tool: "syntaxString",
+	reasoning: "muted",
+};
 const TOOL_NAME_ALIASES: Record<string, string> = {
 	mastra_workspace_list_files: "list_files",
 	mastra_workspace_read_file: "read_file",
@@ -212,6 +224,8 @@ export interface MastraAgentsWidgetOptions {
 	fixedRegion?: boolean;
 	/** Shared view state for list/card/detail mode switching. */
 	viewController?: MastraAgentsWidgetViewController;
+	/** Theme color keys for highlighted card sections. */
+	colors?: MastraAgentWidgetColors;
 	/** Emit Mastra widget viewport metrics. Can also be enabled with MASTRA_WIDGET_DEBUG=1. */
 	debug?: boolean;
 	/** Optional log path for widget metrics. Defaults to ~/.pi/agent/mastra-widget-debug.log. */
@@ -424,7 +438,7 @@ export class MastraAgentsWidget implements Component {
 				});
 			}
 
-			const result = renderCompactActivityList(orderedActivities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options));
+			const result = renderCompactActivityList(orderedActivities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options), this.options.colors);
 			this.visibleToolCallIds = result.visibleCount > 0 ? orderedActivities.slice(-result.visibleCount).map((activity) => activity.toolCallId) : [];
 			return this.finishRender(result.lines, lineBudget, {
 				renderMode: "list",
@@ -487,7 +501,7 @@ export class MastraAgentsWidget implements Component {
 				const maxBodyLines = Math.max(0, Math.min(this.options.cardBodyLines ?? bodyLines, bodyLines));
 				const cardLines = new MastraAgentCard(
 					activity.details,
-					{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: false, fixedTotalLines, maxBodyLines },
+					{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: false, fixedTotalLines, maxBodyLines, colors: this.options.colors },
 					th,
 				).render(width);
 				if (cardLines.length === 0) continue;
@@ -640,6 +654,7 @@ export class MastraAgentsWidget implements Component {
 				maxBodyLines,
 				streamOnly,
 				scrollOffset,
+				colors: this.options.colors,
 				onScrollOffsetResolved: (offset) => {
 					resolvedScrollOffset = offset;
 					this.options.viewController?.resolveDetailScrollOffset(activity.toolCallId, offset);
@@ -713,7 +728,7 @@ export class MastraAgentsListWidget implements Component {
 			});
 		}
 
-		const result = renderCompactActivityList(activities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options));
+		const result = renderCompactActivityList(activities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options), this.options.colors);
 		return this.finishRender(result.lines, lineBudget, {
 			renderMode: "list",
 			totalActivities: allActivities.length,
@@ -793,7 +808,9 @@ function renderCompactActivityList(
 	width: number,
 	theme: Theme,
 	maxAgents = DEFAULT_WIDGET_LIST_MAX_AGENTS,
+	colors?: MastraAgentWidgetColors,
 ): { lines: string[]; visibleCount: number; hiddenCount: number } {
+	const resolvedColors = resolveWidgetColors(colors);
 	const running = activities.filter((activity) => activity.lifecycleStatus === "working");
 	const titleIcon = running.length > 0 ? theme.fg("accent", "●") : theme.fg("success", "✓");
 	const titleMeta = running.length > 0 ? `${running.length} working` : `${activities.length} visible`;
@@ -818,7 +835,7 @@ function renderCompactActivityList(
 		const branch = isLast ? "└─" : "├─";
 		const child = isLast ? "   " : "│  ";
 		lines.push(truncateToWidth(`${theme.fg("dim", branch)} ${formatActivityHeadline(activity, theme)}`, width));
-		lines.push(truncateToWidth(`${theme.fg("dim", child + "├ tools ")}${theme.fg("muted", formatActivityToolStream(activity, theme, width))}`, width));
+		lines.push(truncateToWidth(`${theme.fg("dim", child + "├ tools ")}${theme.fg("muted", formatActivityToolStream(activity, theme, width, resolvedColors))}`, width));
 		const output = activity.errors[0]
 			? `error: ${activity.errors[activity.errors.length - 1]}`
 			: textTail(activity.text, 110) || (activity.prompt ? `prompt: ${textHead(activity.prompt, 90)}` : formatActivityStatusLabel(activity));
@@ -832,11 +849,11 @@ function resolveListMaxAgents(options: MastraAgentsWidgetOptions): number {
 	return Math.max(1, positiveInteger(options.listMaxAgents) ?? DEFAULT_WIDGET_LIST_MAX_AGENTS);
 }
 
-function formatActivityToolStream(activity: MastraAgentActivity, theme: Theme, width: number): string {
+function formatActivityToolStream(activity: MastraAgentActivity, theme: Theme, width: number, colors: Required<MastraAgentWidgetColors>): string {
 	const events = compactToolEvents(recentToolEvents(activity.details, 3));
 	if (events.length === 0) return activity.lastEvent || "waiting for tool events";
 	const previewWidth = Math.max(24, Math.floor(width / 2));
-	return events.map((event) => formatToolEvent(event, theme, previewWidth)).join(theme.fg("dim", " · "));
+	return events.map((event) => formatToolEvent(event, theme, previewWidth, colors)).join(theme.fg("dim", " · "));
 }
 
 function positiveInteger(value: unknown): number | undefined {
@@ -882,6 +899,8 @@ function logWidgetDebug(entry: MastraWidgetDebugEntry, options: MastraAgentsWidg
 export interface MastraAgentCardOptions {
 	expanded?: boolean;
 	isPartial?: boolean;
+	/** Theme color keys for prompt/tool/reasoning emphasis. */
+	colors?: MastraAgentWidgetColors;
 	/** In expanded detail mode, hide prompt and reasoning so only live stream content remains. */
 	streamOnly?: boolean;
 	/** Number of rows to move upward from the live tail in expanded detail mode. */
@@ -906,6 +925,7 @@ export class MastraAgentCard implements Component {
 		const innerWidth = Math.max(1, width - 4);
 		const borderColor = statusColor(this.options.isPartial ? "running" : this.details.status);
 		const th = this.theme;
+		const colors = resolveWidgetColors(this.options.colors);
 		const lines: string[] = [];
 		const border = (s: string) => th.fg(borderColor, s);
 		const topLabel = ` Mastra: ${this.details.agentId} `;
@@ -923,8 +943,8 @@ export class MastraAgentCard implements Component {
 		const pinnedBodyLines: string[] = [];
 		const prompt = this.details.prompt?.trim();
 		if (prompt && !this.options.streamOnly) {
-			pinnedBodyLines.push(th.fg("muted", "Prompt"));
-			pinnedBodyLines.push(...renderPromptLines(prompt, innerWidth, this.options.expanded === true, th));
+			pinnedBodyLines.push(th.fg("text", "Prompt"));
+			pinnedBodyLines.push(...renderPromptLines(prompt, innerWidth, this.options.expanded === true, th, colors.prompt));
 		}
 
 		const bodyLines: string[] = [];
@@ -932,7 +952,7 @@ export class MastraAgentCard implements Component {
 		if (toolEvents.length > 0) {
 			bodyLines.push(th.fg("muted", "Tools"));
 			for (const event of toolEvents) {
-				bodyLines.push(...formatToolEventLines(event, th, innerWidth, this.options.expanded === true));
+				bodyLines.push(...formatToolEventLines(event, th, innerWidth, this.options.expanded === true, colors));
 			}
 		}
 
@@ -944,8 +964,8 @@ export class MastraAgentCard implements Component {
 
 		if (this.details.reasoning && this.options.expanded && !this.options.streamOnly) {
 			bodyLines.push("");
-			bodyLines.push(th.fg("muted", "Reasoning"));
-			bodyLines.push(...renderMarkdownLines(markdownTail(this.details.reasoning, 4_000), innerWidth, { color: (value) => th.fg("dim", value), italic: true }));
+			bodyLines.push(th.fg("text", "Reasoning"));
+			bodyLines.push(...renderMarkdownLines(markdownTail(this.details.reasoning, 4_000), innerWidth, { color: (value) => th.fg(colors.reasoning, value), italic: true }));
 		}
 
 		if (this.details.errors.length > 0) {
@@ -1088,6 +1108,14 @@ function formatActivityStatusLabel(activity: MastraAgentActivity): string {
 	return activity.status;
 }
 
+function resolveWidgetColors(colors?: MastraAgentWidgetColors): Required<MastraAgentWidgetColors> {
+	return {
+		prompt: colors?.prompt ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.prompt,
+		tool: colors?.tool ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.tool,
+		reasoning: colors?.reasoning ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.reasoning,
+	};
+}
+
 function activityIcon(activity: MastraAgentActivity, theme: Theme): string {
 	if (activity.status === "running") return theme.fg("accent", "●");
 	if (activity.status === "done") return theme.fg("success", "✓");
@@ -1101,12 +1129,12 @@ function recentToolEvents(details: MastraAgentCallDetails, limit: number): Mastr
 		.slice(-limit);
 }
 
-function formatToolEvent(event: MastraToolEvent, theme: Theme, previewWidth: number): string {
+function formatToolEvent(event: MastraToolEvent, theme: Theme, previewWidth: number, colors: Required<MastraAgentWidgetColors>): string {
 	const icon = toolEventIcon(event, theme);
 	const rawName = event.name ?? event.id ?? "tool";
-	const name = theme.fg("accent", displayToolName(rawName));
+	const name = theme.fg("text", displayToolName(rawName));
 	const detail = event.type === "result" ? formatToolResultSummary(rawName, event.args, event.result, previewWidth) : formatToolArgs(rawName, event.args, previewWidth);
-	const preview = detail ? ` ${theme.fg("dim", detail)}` : "";
+	const preview = detail ? ` ${theme.fg(colors.tool, detail)}` : "";
 	return `${icon} ${name}${preview}`;
 }
 
@@ -1119,10 +1147,10 @@ function compactToolEvents(events: MastraToolEvent[]): MastraToolEvent[] {
 	});
 }
 
-function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: number, expanded: boolean): string[] {
+function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: number, expanded: boolean, colors: Required<MastraAgentWidgetColors>): string[] {
 	const icon = toolEventIcon(event, theme);
 	const rawName = event.name ?? event.id ?? "tool";
-	const name = theme.fg("accent", displayToolName(rawName));
+	const name = theme.fg("text", displayToolName(rawName));
 	const prefix = `${icon} ${name}`;
 	const detail = event.type === "result"
 		? formatToolResultSummary(rawName, event.args, event.result, width)
@@ -1130,10 +1158,10 @@ function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: numbe
 	if (!detail) return [truncateToWidth(prefix, width)];
 
 	if (!expanded || event.type !== "result") {
-		return wrapTextWithAnsi(`${prefix} ${theme.fg("dim", detail)}`, width);
+		return wrapTextWithAnsi(`${prefix} ${theme.fg(colors.tool, detail)}`, width);
 	}
 
-	const lines = wrapTextWithAnsi(`${prefix} ${theme.fg("dim", detail)}`, width);
+	const lines = wrapTextWithAnsi(`${prefix} ${theme.fg(colors.tool, detail)}`, width);
 	const output = toolResultText(event.result);
 	if (!output || isShortSummary(detail, output)) return lines;
 	const renderedOutput = renderMarkdownLines(markdownTail(output, 3_000), Math.max(1, width - 4));
@@ -1288,7 +1316,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function toolEventIcon(event: MastraToolEvent, theme: Theme): string {
 	if (event.type === "result") return theme.fg("success", "✓");
 	if (event.type === "error") return theme.fg("error", "✗");
-	if (event.type === "call") return theme.fg("accent", "→");
+	if (event.type === "call") return theme.fg("text", "→");
 	return theme.fg("muted", "…");
 }
 
@@ -1329,12 +1357,12 @@ function headLines(lines: string[], limit: number, theme: Theme): string[] {
 	return [...lines.slice(0, kept), theme.fg("dim", `… ${lines.length - kept} more prompt lines`)];
 }
 
-function renderPromptLines(prompt: string, width: number, expanded: boolean, theme: Theme): string[] {
+function renderPromptLines(prompt: string, width: number, expanded: boolean, theme: Theme, color: ThemeColor): string[] {
 	const maxChars = expanded ? 2_000 : 500;
 	const maxLines = expanded ? EXPANDED_PROMPT_LINES : COLLAPSED_PROMPT_LINES;
 	const trimmed = filterPromptScaffolding(prompt).trim();
 	const clipped = trimmed.length <= maxChars ? trimmed : `${trimmed.slice(0, Math.max(0, maxChars - 1))}…`;
-	const lines = clipped.split("\n").flatMap((line) => (line.length === 0 ? [""] : wrapTextWithAnsi(theme.fg("dim", line), width)));
+	const lines = clipped.split("\n").flatMap((line) => (line.length === 0 ? [""] : wrapTextWithAnsi(theme.fg(color, line), width)));
 	return headLines(lines, maxLines, theme);
 }
 
