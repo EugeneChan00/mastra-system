@@ -84,9 +84,12 @@ test("extension queues async agent completion as steer reminder and message_end 
 	const originalFetch = globalThis.fetch;
 	const registeredTools: any[] = [];
 	const handlers = new Map<string, (...args: any[]) => unknown>();
+	const shortcuts = new Map<string, { handler: (ctx: any) => unknown }>();
 	const sentMessages: Array<{ message: any; options: any }> = [];
 	const statusCalls: Array<{ key: string; value: string }> = [];
-	let widgetFactory: ((tui: any, theme: any) => any) | undefined;
+	const widgetFactories = new Map<string, (tui: any, theme: any) => any>();
+	let workflowStreamCalls = 0;
+	let agentStreamCalls = 0;
 
 	globalThis.fetch = (async (url: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
 		const requestUrl = String(url);
@@ -106,8 +109,22 @@ test("extension queues async agent completion as steer reminder and message_end 
 			return new Response(JSON.stringify({ runs: [] }), { status: 200, headers: { "content-type": "application/json" } });
 		}
 		if (requestUrl.includes(`/workflows/${encodeURIComponent(MASTRA_PI_AGENT_JOB_WORKFLOW_ID)}/stream?`)) {
+			workflowStreamCalls += 1;
 			return new Response(
 				`data: ${JSON.stringify({ type: "pi-agent-stream-chunk", payload: { chunk: { type: "finish" } } })}\n\ndata: [DONE]\n\n`,
+				{ status: 200, headers: { "content-type": "text/event-stream" } },
+			);
+		}
+		if (requestUrl.endsWith("/agents/validator-agent/stream")) {
+			agentStreamCalls += 1;
+			return new Response(
+				[
+					`data: ${JSON.stringify({ type: "tool-call", toolCallId: "tool-1", toolName: "read_file", args: { path: "src/index.ts" } })}\n\n`,
+					`data: ${JSON.stringify({ type: "tool-result", toolCallId: "tool-1", toolName: "read_file", result: "ok" })}\n\n`,
+					`data: ${JSON.stringify({ type: "text-delta", text: "extension result" })}\n\n`,
+					`data: ${JSON.stringify({ type: "finish" })}\n\n`,
+					"data: [DONE]\n\n",
+				].join(""),
 				{ status: 200, headers: { "content-type": "text/event-stream" } },
 			);
 		}
@@ -132,6 +149,9 @@ test("extension queues async agent completion as steer reminder and message_end 
 			},
 			registerMessageRenderer() {},
 			registerCommand() {},
+			registerShortcut(shortcut: string, options: { handler: (ctx: any) => unknown }) {
+				shortcuts.set(shortcut, options);
+			},
 			on(event: string, handler: (...args: any[]) => unknown) {
 				handlers.set(event, handler);
 			},
@@ -154,8 +174,9 @@ test("extension queues async agent completion as steer reminder and message_end 
 				},
 				ui: {
 					notify() {},
-					setWidget(_id: string, factory: (tui: any, theme: any) => any) {
-						widgetFactory = factory;
+					setWidget(id: string, factory: ((tui: any, theme: any) => any) | undefined) {
+						if (factory) widgetFactories.set(id, factory);
+						else widgetFactories.delete(id);
 					},
 					setStatus(key: string, value: string) {
 						statusCalls.push({ key, value });
@@ -163,8 +184,10 @@ test("extension queues async agent completion as steer reminder and message_end 
 				},
 			},
 		);
-		assert.equal(typeof widgetFactory, "function");
-		const widget = widgetFactory!({ requestRender() {} }, stubTheme as any);
+		assert.equal(typeof widgetFactories.get("mastra-agents-list"), "function");
+		assert.equal(typeof widgetFactories.get("mastra-agents-region"), "function");
+		const listWidget = widgetFactories.get("mastra-agents-list")!({ requestRender() {} }, stubTheme as any);
+		const regionWidget = widgetFactories.get("mastra-agents-region")!({ requestRender() {} }, stubTheme as any);
 
 		const queryTool = registeredTools.find((tool) => tool.name === MASTRA_AGENT_QUERY_TOOL_NAME);
 		assert.ok(queryTool, "agent_query tool should be registered by the extension");
@@ -178,8 +201,15 @@ test("extension queues async agent completion as steer reminder and message_end 
 		assert.match(sent.message.content, /^<system-reminder>\nAsynchronous Mastra agent task completed:/);
 		assert.equal(sent.message.details.lifecycleStatus, "agent_response_queued");
 		assert.equal(sent.message.details.status, "done");
+		assert.equal(agentStreamCalls, 1);
+		assert.equal(workflowStreamCalls, 0, "agent_query should use direct agent stream, not workflow stream");
 		assert.ok(statusCalls.some((call) => call.key === MASTRA_STATUS_KEY && call.value === "mastra: 1 running"));
-		assert.ok(widget.render(100).some((line: string) => line.includes("Mastra: validator-agent")), "queued completion should keep widget card visible");
+		assert.ok(listWidget.render(100).some((line: string) => line.includes("validator-agent")), "queued completion should stay visible in default list mode");
+		assert.deepEqual(regionWidget.render(100), [], "region widget should be hidden in default list mode");
+
+		assert.ok(shortcuts.has("ctrl+h"), "view mode shortcut should be registered");
+		await shortcuts.get("ctrl+h")!.handler({ ui: { notify() {} } });
+		assert.ok(regionWidget.render(100).some((line: string) => line.includes("Mastra: validator-agent")), "card mode should render queued completion in fixed region");
 
 		const messageEnd = handlers.get("message_end");
 		assert.equal(typeof messageEnd, "function");
@@ -190,7 +220,7 @@ test("extension queues async agent completion as steer reminder and message_end 
 				details: { jobId: "other-job" },
 			},
 		});
-		assert.ok(widget.render(100).some((line: string) => line.includes("Mastra: validator-agent")), "unmatched message_end should not collapse the card");
+		assert.ok(regionWidget.render(100).some((line: string) => line.includes("Mastra: validator-agent")), "unmatched message_end should not collapse the card");
 
 		await messageEnd?.({
 			message: {
@@ -202,8 +232,10 @@ test("extension queues async agent completion as steer reminder and message_end 
 
 		assert.equal(statusCalls.at(-1)?.key, MASTRA_STATUS_KEY);
 		assert.equal(statusCalls.at(-1)?.value, "mastra: 1 agents, 1 workflows");
-		assert.deepEqual(widget.render(100), []);
-		widget.dispose();
+		assert.deepEqual(listWidget.render(100), []);
+		assert.deepEqual(regionWidget.render(100), []);
+		listWidget.dispose();
+		regionWidget.dispose();
 	} finally {
 		globalThis.fetch = originalFetch;
 	}

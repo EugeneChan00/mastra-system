@@ -683,6 +683,7 @@ export function createMastraTools(client = new MastraHttpClient(), options: Mast
 		new MastraAsyncAgentManager(client, {
 			activitySink: options.agentActivitySink,
 			onComplete: options.onAsyncAgentComplete,
+			useWorkflowJobs: false,
 		});
 	return [
 		createMastraAgentQueryTool(asyncAgentManager, client, options.agentActivitySink),

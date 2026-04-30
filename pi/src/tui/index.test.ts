@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { visibleWidth } from "@mariozechner/pi-tui";
-import { filterPromptScaffolding, MastraAgentActivityStore, MastraAgentCard, MastraAgentsWidget } from "./index.js";
+import {
+	filterPromptScaffolding,
+	MastraAgentActivityStore,
+	MastraAgentCard,
+	MastraAgentsListWidget,
+	MastraAgentsWidget,
+	MastraAgentsWidgetViewController,
+} from "./index.js";
 import type { MastraAgentCallDetails, MastraAgentCallInput } from "../mastra/types.js";
 
 // Stub theme matching the real Theme interface surface used by MastraAgentCard
@@ -126,6 +136,142 @@ test("MastraAgentsWidget uses default 4-card and 60-line budget", () => {
 
 	assert.equal(lines.filter((line) => line.includes("Mastra: agent-")).length, 4);
 	assert.ok(lines.length <= 60, `expected widget lines to honor default maxLines=60, got ${lines.length}`);
+});
+
+test("MastraAgentsWidget clamps configured maxLines to terminal viewport rows", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n"),
+	}));
+
+	const widget = new MastraAgentsWidget(makeTui(24), stubTheme as any, store, { maxLines: 60 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.ok(lines.length <= 14, `expected terminal-aware budget of 14 lines, got ${lines.length}`);
+	assert.ok(lines.length > 1, "card should still use available viewport budget");
+});
+
+test("MastraAgentsWidget falls back to compact rendering when viewport cannot fit a whole card", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "streaming output",
+	}));
+
+	const widget = new MastraAgentsWidget(makeTui(11), stubTheme as any, store, { maxLines: 60 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.ok(lines.length <= 1, `expected tiny viewport clamp, got ${lines.length}`);
+	assert.equal(lines.filter((line) => line.includes("Mastra: agent-")).length, 0);
+});
+
+test("MastraAgentsWidget emits viewport budget metrics when debug logging is enabled", async () => {
+	const previousDebug = process.env.MASTRA_WIDGET_DEBUG;
+	const previousDebugPath = process.env.MASTRA_WIDGET_DEBUG_PATH;
+	const dir = await mkdtemp(join(tmpdir(), "mastra-widget-debug-"));
+	const logPath = join(dir, "widget.log");
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "streaming output",
+	}));
+
+	try {
+		process.env.MASTRA_WIDGET_DEBUG = "1";
+		process.env.MASTRA_WIDGET_DEBUG_PATH = logPath;
+		const widget = new MastraAgentsWidget(makeTui(24), stubTheme as any, store, { maxLines: 60 });
+		widget.render(100);
+		widget.dispose();
+
+		const log = await readFile(logPath, "utf8");
+		assert.match(log, /terminalRows=24/);
+		assert.match(log, /configuredMaxLines=60/);
+		assert.match(log, /effectiveMaxLines=14/);
+		assert.match(log, /clamped=true/);
+		assert.match(log, /renderedLines=/);
+	} finally {
+		if (previousDebug === undefined) delete process.env.MASTRA_WIDGET_DEBUG;
+		else process.env.MASTRA_WIDGET_DEBUG = previousDebug;
+		if (previousDebugPath === undefined) delete process.env.MASTRA_WIDGET_DEBUG_PATH;
+		else process.env.MASTRA_WIDGET_DEBUG_PATH = previousDebugPath;
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("MastraAgentsListWidget renders compact default list above the editor", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 3; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: `output ${i}`,
+			toolCalls: [{ id: `tool-${i}`, name: "workspaceReadFile", type: "call", args: { path: `file-${i}.ts` }, timestamp: i, raw: {} }],
+		}));
+	}
+
+	const viewController = new MastraAgentsWidgetViewController("list");
+	const widget = new MastraAgentsListWidget(makeTui(24), stubTheme as any, store, { viewController, listMaxLines: 10 });
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.ok(lines[0].includes("Mastra Agents"));
+	assert.ok(lines.length <= 10);
+	assert.ok(lines.some((line) => line.includes("agent-3")));
+	assert.equal(lines.filter((line) => line.includes("├ tools")).length, 3);
+	assert.equal(lines.filter((line) => line.includes("└ now")).length, 3);
+	assert.ok(lines.some((line) => line.includes("read_file")), "list mode should stream tool events");
+	assert.equal(lines.some((line) => line.includes("Mastra: agent-")), false, "list mode should not render full cards");
+});
+
+test("MastraAgentsWidget hides in list mode and uses a fixed region in card mode", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "output",
+	}));
+
+	const viewController = new MastraAgentsWidgetViewController("list");
+	const widget = new MastraAgentsWidget(makeTui(24), stubTheme as any, store, { viewController, fixedRegion: true, maxLines: 10 });
+	assert.deepEqual(widget.render(100), []);
+
+	viewController.setMode("cards");
+	const lines = widget.render(100);
+	widget.dispose();
+
+	assert.equal(lines.length, 10);
+	assert.ok(lines.some((line) => line.includes("Mastra: agent-1")));
+});
+
+test("MastraAgentsWidget detail mode dedicates the region to the focused agent", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	for (let i = 1; i <= 2; i++) {
+		store.start(`call-${i}`, { agentId: `agent-${i}`, message: `task ${i}` } as MastraAgentCallInput, makeDetails({
+			agentId: `agent-${i}`,
+			status: "running",
+			text: Array.from({ length: 20 }, (_, index) => `agent ${i} line ${index + 1}`).join("\n"),
+		}));
+	}
+
+	const viewController = new MastraAgentsWidgetViewController("detail");
+	viewController.focusNext(store.snapshot({ includeFinished: false }), 1);
+	const widget = new MastraAgentsWidget(makeTui(30), stubTheme as any, store, { viewController, fixedRegion: true, maxLines: 12 });
+	const firstFocus = widget.render(100);
+	viewController.focusNext(store.snapshot({ includeFinished: false }), 1);
+	const secondFocus = widget.render(100);
+	widget.dispose();
+
+	assert.equal(firstFocus.length, 12);
+	assert.ok(firstFocus.some((line) => line.includes("Mastra: agent-1")));
+	assert.equal(secondFocus.length, 12);
+	assert.ok(secondFocus.some((line) => line.includes("Mastra: agent-2")));
+	assert.equal(secondFocus.filter((line) => line.includes("Mastra: agent-")).length, 1);
 });
 
 test("MastraAgentsWidget render uses full live width with no artificial cap", () => {
@@ -306,6 +452,10 @@ test("MastraAgentsWidget preserves whole newest cards under tight height budget"
 function agentLabel(line: string): string {
 	const match = line.match(/Mastra: (agent-\d+)/);
 	return match?.[1] ?? line;
+}
+
+function makeTui(rows?: number): { requestRender(): void; terminal?: { rows: number } } {
+	return rows === undefined ? { requestRender() {} } : { requestRender() {}, terminal: { rows } };
 }
 
 function makeDetails(overrides: Partial<MastraAgentCallDetails> = {}): MastraAgentCallDetails {
