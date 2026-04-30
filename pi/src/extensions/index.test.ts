@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { MASTRA_AGENT_QUERY_TOOL_NAME, MASTRA_AGENT_RESULT_MESSAGE_TYPE, MASTRA_PI_AGENT_JOB_WORKFLOW_ID, MASTRA_STATUS_KEY } from "../const.js";
 import { PI_HARNESS_MODE_MESSAGE_TYPE } from "../harness/mode.js";
 import type { MastraAgentAsyncJobSummary } from "../mastra/index.js";
 import { PI_AGENT_STARTUP_CONTEXT_MESSAGE_TYPE } from "../prompts/index.js";
-import mastraPiExtension, { completionJobIdFromMessageEnd, formatAsyncAgentCompletion, hasCompletionReminder } from "./index.js";
+import mastraPiExtension, { completionJobIdFromMessageEnd, formatAsyncAgentCompletion, hasCompletionReminder, matchesMastraWidgetShortcut } from "./index.js";
 
 const stubTheme: Record<string, (...args: string[]) => string> = {
 	fg: (_color: string, text: string) => text,
@@ -207,6 +210,9 @@ test("Shift+Tab cycles harness mode and next submitted prompt emits changed mode
 					notify(message: string) {
 						notifications.push(message);
 					},
+					onTerminalInput() {
+						return () => undefined;
+					},
 					setEditorComponent(factory: typeof editorFactory) {
 						editorFactory = factory;
 					},
@@ -329,11 +335,39 @@ test("session_start restores submitted harness mode state for continue and resum
 	}
 });
 
+test("matchesMastraWidgetShortcut avoids raw editor-key ambiguities", () => {
+	assert.equal(matchesMastraWidgetShortcut("\b", "ctrl+h"), false, "raw backspace must not cycle the widget");
+	assert.equal(matchesMastraWidgetShortcut("\n", "ctrl+j"), false, "raw line feed must not scroll the widget");
+	assert.equal(matchesMastraWidgetShortcut("\x1b[104;5u", "ctrl+h"), true, "disambiguated ctrl+h should still work");
+	assert.equal(matchesMastraWidgetShortcut("\x1b[106;5u", "ctrl+j"), true, "disambiguated ctrl+j should still work");
+	assert.equal(matchesMastraWidgetShortcut("\x0b", "ctrl+k"), true);
+	assert.equal(matchesMastraWidgetShortcut("\x1bh", "alt+h"), true);
+	assert.equal(matchesMastraWidgetShortcut("\x1bj", "alt+j"), true);
+	assert.equal(matchesMastraWidgetShortcut("\x1bk", "alt+k"), true);
+	assert.equal(matchesMastraWidgetShortcut("\x1bs", "alt+s"), true);
+});
+
 test("extension queues async agent completion as steer reminder and message_end collapses activity", async () => {
 	const originalFetch = globalThis.fetch;
+	const cwd = await mkdtemp(join(tmpdir(), "mastra-extension-session-"));
+	await writeFile(
+		join(cwd, "config.yaml"),
+		[
+			"mastra-agent-extension:",
+			"  defaultViewMode: list",
+			"  viewModeShortcut: alt+h",
+			"  nextAgentShortcut: n",
+			"  previousAgentShortcut: p",
+			"  detailScrollDownShortcut: alt+j",
+			"  detailScrollUpShortcut: alt+k",
+			"  detailStreamOnlyShortcut: alt+s",
+		].join("\n"),
+		"utf8",
+	);
 	const registeredTools: any[] = [];
 	const handlers = new Map<string, (...args: any[]) => unknown>();
 	const shortcuts = new Map<string, { handler: (ctx: any) => unknown }>();
+	const terminalInputHandlers: Array<(data: string) => { consume?: boolean; data?: string } | undefined> = [];
 	const sentMessages: Array<{ message: any; options: any }> = [];
 	const statusCalls: Array<{ key: string; value: string }> = [];
 	const widgetFactories = new Map<string, (tui: any, theme: any) => any>();
@@ -376,7 +410,7 @@ test("extension queues async agent completion as steer reminder and message_end 
 						controller.enqueue(encoder.encode([
 							`data: ${JSON.stringify({ type: "tool-call", toolCallId: "tool-1", toolName: "read_file", args: { path: "src/index.ts" } })}\n\n`,
 							`data: ${JSON.stringify({ type: "tool-result", toolCallId: "tool-1", toolName: "read_file", result: "ok" })}\n\n`,
-							`data: ${JSON.stringify({ type: "text-delta", text: "extension result" })}\n\n`,
+							`data: ${JSON.stringify({ type: "text-delta", text: Array.from({ length: 80 }, (_, index) => `- extension result ${index + 1}`).join("\n") })}\n\n`,
 						].join("")));
 						releaseAgentFinish = () => {
 							controller.enqueue(encoder.encode([`data: ${JSON.stringify({ type: "finish" })}\n\n`, "data: [DONE]\n\n"].join("")));
@@ -426,7 +460,7 @@ test("extension queues async agent completion as steer reminder and message_end 
 		await sessionStart?.(
 			{},
 			{
-				cwd: "/workspace/project",
+				cwd,
 				hasUI: true,
 				sessionManager: {
 					getSessionId: () => "session-extension",
@@ -436,6 +470,13 @@ test("extension queues async agent completion as steer reminder and message_end 
 					theme: stubTheme,
 					notify() {},
 					setEditorComponent() {},
+					onTerminalInput(handler: (data: string) => { consume?: boolean; data?: string } | undefined) {
+						terminalInputHandlers.push(handler);
+						return () => {
+							const index = terminalInputHandlers.indexOf(handler);
+							if (index >= 0) terminalInputHandlers.splice(index, 1);
+						};
+					},
 					setWidget(id: string, factory: ((tui: any, theme: any) => any) | undefined, options?: { placement?: string }) {
 						widgetCalls.push({ id, hasFactory: typeof factory === "function", placement: options?.placement });
 						if (factory) widgetFactories.set(id, factory);
@@ -459,12 +500,32 @@ test("extension queues async agent completion as steer reminder and message_end 
 		assert.ok(queryTool, "agent_query tool should be registered by the extension");
 		const queryPromise = queryTool.execute("call", { agentId: "validator-agent", message: "prompt", jobName: "extension job" });
 		await waitFor(() => widgetFactories.has("mastra-agents"));
-		const widget = widgetFactories.get("mastra-agents")!({ requestRender() {}, terminal: { rows: 30 } }, stubTheme as any);
+		let renderRequests = 0;
+		const widget = widgetFactories.get("mastra-agents")!({ requestRender() { renderRequests += 1; }, terminal: { rows: 30 } }, stubTheme as any);
 		assert.ok(widget.render(100).some((line: string) => line.includes("validator-agent")), "running job should mount the compact list surface");
 		assert.equal(widget.render(100).some((line: string) => line.includes("Mastra: validator-agent")), false, "default list mode should not render a card");
-		assert.ok(shortcuts.has("ctrl+h"), "view mode shortcut should be registered");
-		await shortcuts.get("ctrl+h")!.handler({ ui: { notify() {} } });
+		assert.equal(shortcuts.size, 0, "widget hotkeys should be session-scoped terminal listeners, not global extension shortcuts");
+		assert.equal(terminalInputHandlers.length, 1, "session should install one terminal shortcut listener");
+		assert.equal(terminalInputHandlers[0]?.("\x0b"), undefined, "detail scroll-up shortcut should not be consumed outside detail mode");
+		assert.equal(renderRequests, 0);
+		assert.equal(terminalInputHandlers[0]?.("\b"), undefined, "raw backspace should not be consumed as the view-mode shortcut");
+		assert.equal(terminalInputHandlers[0]?.("\x1bh")?.consume, true, "alt+h view-mode shortcut should be consumed");
+		assert.ok(renderRequests > 0, "view-mode shortcut should request a widget render");
 		assert.ok(widget.render(100).some((line: string) => line.includes("Mastra: validator-agent")), "card mode should render running work in fixed region");
+		await waitFor(() => widget.render(100).some((line: string) => line.includes("extension result 80")));
+		const renderRequestsBeforeStreamOnly = renderRequests;
+		assert.equal(terminalInputHandlers[0]?.("\x1bs")?.consume, true, "alt+s stream-only shortcut should be consumed");
+		assert.ok(renderRequests > renderRequestsBeforeStreamOnly, "stream-only shortcut should request a widget render");
+		assert.ok(widget.render(100).some((line: string) => line.includes("stream-only")), "stream-only shortcut should affect detail view state");
+		const renderRequestsBeforeScrollUp = renderRequests;
+		assert.equal(terminalInputHandlers[0]?.("\x1bk")?.consume, true, "alt+k scroll-up shortcut should be consumed in detail mode");
+		assert.ok(renderRequests > renderRequestsBeforeScrollUp, "scroll-up shortcut should request a widget render");
+		assert.ok(widget.render(100).some((line: string) => line.includes("scroll +")), "scroll-up shortcut should move away from live tail");
+		const renderRequestsBeforeScrollDown = renderRequests;
+		assert.equal(terminalInputHandlers[0]?.("\n"), undefined, "raw newline should not be consumed as the scroll-down shortcut");
+		assert.equal(terminalInputHandlers[0]?.("\x1bj")?.consume, true, "alt+j scroll-down shortcut should be consumed in detail mode");
+		assert.ok(renderRequests > renderRequestsBeforeScrollDown, "scroll-down shortcut should request a widget render");
+		assert.equal(widget.render(100).some((line: string) => line.includes("scroll +")), false, "scroll-down shortcut should return toward live tail");
 
 		await waitFor(() => typeof releaseAgentFinish === "function");
 		releaseAgentFinish?.();
@@ -491,6 +552,7 @@ test("extension queues async agent completion as steer reminder and message_end 
 		assert.equal(activeMounts[0]?.placement, "aboveEditor");
 		assert.equal(activeUnmountsAfterMount.length, 1, "completion should unmount the active widget once");
 		assert.deepEqual(widget.render(100), [], "queued completion should no longer occupy widget rows");
+		assert.equal(terminalInputHandlers[0]?.("\x0b"), undefined, "detail scroll-up shortcut should not be consumed after active work ends");
 
 		const messageEnd = handlers.get("message_end");
 		assert.equal(typeof messageEnd, "function");
@@ -517,6 +579,7 @@ test("extension queues async agent completion as steer reminder and message_end 
 		widget.dispose();
 	} finally {
 		globalThis.fetch = originalFetch;
+		await rm(cwd, { recursive: true, force: true });
 	}
 });
 

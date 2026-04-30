@@ -1,5 +1,5 @@
 import { getMarkdownTheme, type Theme, type ThemeColor } from "@mariozechner/pi-coding-agent";
-import type { Component, TUI as PiTUI } from "@mariozechner/pi-tui";
+import type { Component, DefaultTextStyle, MarkdownTheme, TUI as PiTUI } from "@mariozechner/pi-tui";
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -17,8 +17,22 @@ const COLLAPSED_CARD_BODY_LINES = 18;
 const EXPANDED_CARD_BODY_LINES = 48; // 50 total lines including top/bottom borders.
 const COLLAPSED_PROMPT_LINES = 3;
 const EXPANDED_PROMPT_LINES = 8;
+const DETAIL_SCROLL_STEP_ROWS = 5;
+const MAX_DETAIL_SCROLL_OFFSET_ROWS = 5_000;
 const DEFAULT_ACTIVITY_LINGER_MS = 12_000;
 const ERROR_ACTIVITY_LINGER_MS = 30_000;
+export interface MastraAgentWidgetColors {
+	prompt?: ThemeColor;
+	tool?: ThemeColor;
+	reasoning?: ThemeColor;
+}
+// These roles color payload/detail text only. Labels and tool names stay on the
+// normal foreground so the card hierarchy remains stable while streams update.
+export const DEFAULT_MASTRA_AGENT_WIDGET_COLORS: Required<MastraAgentWidgetColors> = {
+	prompt: "syntaxString",
+	tool: "syntaxString",
+	reasoning: "muted",
+};
 const TOOL_NAME_ALIASES: Record<string, string> = {
 	mastra_workspace_list_files: "list_files",
 	mastra_workspace_read_file: "read_file",
@@ -30,6 +44,22 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
 	workspaceReadFile: "read_file",
 	workspaceWriteFile: "write_file",
 	workspaceReplaceInFile: "edit_file",
+};
+const FALLBACK_MARKDOWN_THEME: MarkdownTheme = {
+	heading: (text) => text,
+	link: (text) => text,
+	linkUrl: (text) => text,
+	code: (text) => text,
+	codeBlock: (text) => text,
+	codeBlockBorder: (text) => text,
+	quote: (text) => text,
+	quoteBorder: (text) => text,
+	hr: (text) => text,
+	listBullet: (text) => text,
+	bold: (text) => text,
+	italic: (text) => text,
+	strikethrough: (text) => text,
+	underline: (text) => text,
 };
 
 // Patterns matched against TUI-displayed text to suppress internal prompt
@@ -194,6 +224,8 @@ export interface MastraAgentsWidgetOptions {
 	fixedRegion?: boolean;
 	/** Shared view state for list/card/detail mode switching. */
 	viewController?: MastraAgentsWidgetViewController;
+	/** Theme color keys for highlighted card sections. */
+	colors?: MastraAgentWidgetColors;
 	/** Emit Mastra widget viewport metrics. Can also be enabled with MASTRA_WIDGET_DEBUG=1. */
 	debug?: boolean;
 	/** Optional log path for widget metrics. Defaults to ~/.pi/agent/mastra-widget-debug.log. */
@@ -205,6 +237,8 @@ export type MastraAgentsViewMode = "list" | "cards" | "detail";
 export class MastraAgentsWidgetViewController {
 	private mode: MastraAgentsViewMode;
 	private focusedToolCallId: string | undefined;
+	private detailStreamOnly = false;
+	private readonly detailScrollOffsets = new Map<string, number>();
 	private readonly listeners = new Set<() => void>();
 
 	constructor(initialMode: MastraAgentsViewMode = "list") {
@@ -213,6 +247,29 @@ export class MastraAgentsWidgetViewController {
 
 	getMode(): MastraAgentsViewMode {
 		return this.mode;
+	}
+
+	isDetailStreamOnly(): boolean {
+		return this.detailStreamOnly;
+	}
+
+	toggleDetailStreamOnly(): boolean {
+		this.detailStreamOnly = !this.detailStreamOnly;
+		this.notify();
+		return this.detailStreamOnly;
+	}
+
+	reset(mode: MastraAgentsViewMode = "list"): void {
+		const changed =
+			this.mode !== mode ||
+			this.focusedToolCallId !== undefined ||
+			this.detailStreamOnly ||
+			this.detailScrollOffsets.size > 0;
+		this.mode = mode;
+		this.focusedToolCallId = undefined;
+		this.detailStreamOnly = false;
+		this.detailScrollOffsets.clear();
+		if (changed) this.notify();
 	}
 
 	setMode(mode: MastraAgentsViewMode): void {
@@ -248,9 +305,57 @@ export class MastraAgentsWidgetViewController {
 		return nextActivity;
 	}
 
+	scrollDetail(toolCallId: string | undefined, deltaRows: number): number {
+		if (!toolCallId || deltaRows === 0) return toolCallId ? this.getDetailScrollOffset(toolCallId) : 0;
+		const current = this.getDetailScrollOffset(toolCallId);
+		const next = Math.min(MAX_DETAIL_SCROLL_OFFSET_ROWS, Math.max(0, current + Math.trunc(deltaRows)));
+		if (next !== current) {
+			if (next === 0) this.detailScrollOffsets.delete(toolCallId);
+			else this.detailScrollOffsets.set(toolCallId, next);
+			this.notify();
+		}
+		return next;
+	}
+
+	scrollDetailUp(toolCallId: string | undefined, rows = DETAIL_SCROLL_STEP_ROWS): number {
+		return this.scrollDetail(toolCallId, Math.abs(rows));
+	}
+
+	scrollDetailDown(toolCallId: string | undefined, rows = DETAIL_SCROLL_STEP_ROWS): number {
+		return this.scrollDetail(toolCallId, -Math.abs(rows));
+	}
+
+	getDetailScrollOffset(toolCallId: string | undefined): number {
+		if (!toolCallId) return 0;
+		return this.detailScrollOffsets.get(toolCallId) ?? 0;
+	}
+
+	resolveDetailScrollOffset(toolCallId: string | undefined, offsetRows: number): void {
+		if (!toolCallId) return;
+		const next = Math.max(0, Math.floor(offsetRows));
+		if (next === 0) this.detailScrollOffsets.delete(toolCallId);
+		else this.detailScrollOffsets.set(toolCallId, next);
+	}
+
 	getFocusedActivity(activities: MastraAgentActivity[]): MastraAgentActivity | undefined {
 		const focusable = visibleWidgetActivities(activities);
 		return focusable.find((activity) => activity.toolCallId === this.focusedToolCallId) ?? focusable.at(-1);
+	}
+
+	syncActivities(activities: MastraAgentActivity[]): void {
+		const visibleIds = new Set(visibleWidgetActivities(activities).map((activity) => activity.toolCallId));
+		let changed = false;
+		if (this.focusedToolCallId !== undefined && !visibleIds.has(this.focusedToolCallId)) {
+			this.focusedToolCallId = undefined;
+			changed = true;
+		}
+		for (const toolCallId of this.detailScrollOffsets.keys()) {
+			if (!visibleIds.has(toolCallId)) {
+				this.detailScrollOffsets.delete(toolCallId);
+				changed = true;
+			}
+		}
+		if (changed) this.notify();
 	}
 
 	subscribe(listener: () => void): () => void {
@@ -333,7 +438,7 @@ export class MastraAgentsWidget implements Component {
 				});
 			}
 
-			const result = renderCompactActivityList(orderedActivities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options));
+			const result = renderCompactActivityList(orderedActivities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options), this.options.colors);
 			this.visibleToolCallIds = result.visibleCount > 0 ? orderedActivities.slice(-result.visibleCount).map((activity) => activity.toolCallId) : [];
 			return this.finishRender(result.lines, lineBudget, {
 				renderMode: "list",
@@ -396,7 +501,7 @@ export class MastraAgentsWidget implements Component {
 				const maxBodyLines = Math.max(0, Math.min(this.options.cardBodyLines ?? bodyLines, bodyLines));
 				const cardLines = new MastraAgentCard(
 					activity.details,
-					{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: false, fixedTotalLines, maxBodyLines },
+					{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: false, fixedTotalLines, maxBodyLines, colors: this.options.colors },
 					th,
 				).render(width);
 				if (cardLines.length === 0) continue;
@@ -500,15 +605,22 @@ export class MastraAgentsWidget implements Component {
 
 		this.visibleToolCallIds = [activity.toolCallId];
 		const position = Math.max(0, orderedActivities.findIndex((candidate) => candidate.toolCallId === activity.toolCallId)) + 1;
-		const headerParts = [
-			`${position}/${orderedActivities.length}`,
-			formatActivityStatusLabel(activity),
-			activity.modeId ? `mode=${activity.modeId}` : undefined,
-		].filter(Boolean);
-		const header = truncateToWidth(
-			`${activityIcon(activity, th)} ${th.bold("Mastra Agent")} ${th.fg("accent", activity.agentId)} ${th.fg("dim", headerParts.join(" · "))}`,
-			width,
-		);
+		const streamOnly = this.options.viewController?.isDetailStreamOnly() ?? false;
+		const scrollOffset = this.options.viewController?.getDetailScrollOffset(activity.toolCallId) ?? 0;
+		const renderHeader = (effectiveScrollOffset: number) => {
+			const headerParts = [
+				`${position}/${orderedActivities.length}`,
+				formatActivityStatusLabel(activity),
+				activity.modeId ? `mode=${activity.modeId}` : undefined,
+				streamOnly ? "stream-only" : undefined,
+				effectiveScrollOffset > 0 ? `scroll +${effectiveScrollOffset}` : undefined,
+			].filter(Boolean);
+			return truncateToWidth(
+				`${activityIcon(activity, th)} ${th.bold("Mastra Agent")} ${th.fg("accent", activity.agentId)} ${th.fg("dim", headerParts.join(" · "))}`,
+				width,
+			);
+		};
+		const header = renderHeader(0);
 		if (maxLines <= 1) {
 			return this.finishRender([header].slice(0, maxLines), lineBudget, {
 				renderMode: "detail",
@@ -519,14 +631,38 @@ export class MastraAgentsWidget implements Component {
 				overflowCards: Math.max(0, orderedActivities.length - 1),
 			});
 		}
+		if (maxLines <= 3) {
+			const compactLine = truncateToWidth(th.fg("muted", activity.lastEvent || textTail(activity.text, 120) || formatActivityStatusLabel(activity)), width);
+			return this.finishRender([header, compactLine].slice(0, maxLines), lineBudget, {
+				renderMode: "detail",
+				totalActivities,
+				workingActivities: orderedActivities.length,
+				hiddenQueuedActivities,
+				visibleCards: 1,
+				overflowCards: Math.max(0, orderedActivities.length - 1),
+			});
+		}
 		const fixedTotalLines = Math.max(2, maxLines - 1);
 		const maxBodyLines = Math.max(0, fixedTotalLines - 2);
+		let resolvedScrollOffset = 0;
 		const cardLines = new MastraAgentCard(
 			activity.details,
-			{ isPartial: activity.lifecycleStatus === "working" && activity.status === "running", expanded: true, fixedTotalLines, maxBodyLines },
+			{
+				isPartial: activity.lifecycleStatus === "working" && activity.status === "running",
+				expanded: true,
+				fixedTotalLines,
+				maxBodyLines,
+				streamOnly,
+				scrollOffset,
+				colors: this.options.colors,
+				onScrollOffsetResolved: (offset) => {
+					resolvedScrollOffset = offset;
+					this.options.viewController?.resolveDetailScrollOffset(activity.toolCallId, offset);
+				},
+			},
 			th,
 		).render(width);
-		return this.finishRender([header, ...cardLines].slice(0, maxLines), lineBudget, {
+		return this.finishRender([renderHeader(resolvedScrollOffset), ...cardLines].slice(0, maxLines), lineBudget, {
 			renderMode: "detail",
 			totalActivities,
 			workingActivities: orderedActivities.length,
@@ -592,7 +728,7 @@ export class MastraAgentsListWidget implements Component {
 			});
 		}
 
-		const result = renderCompactActivityList(activities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options));
+		const result = renderCompactActivityList(activities, lineBudget.effectiveMaxLines, width, this.theme, resolveListMaxAgents(this.options), this.options.colors);
 		return this.finishRender(result.lines, lineBudget, {
 			renderMode: "list",
 			totalActivities: allActivities.length,
@@ -672,7 +808,9 @@ function renderCompactActivityList(
 	width: number,
 	theme: Theme,
 	maxAgents = DEFAULT_WIDGET_LIST_MAX_AGENTS,
+	colors?: MastraAgentWidgetColors,
 ): { lines: string[]; visibleCount: number; hiddenCount: number } {
+	const resolvedColors = resolveWidgetColors(colors);
 	const running = activities.filter((activity) => activity.lifecycleStatus === "working");
 	const titleIcon = running.length > 0 ? theme.fg("accent", "●") : theme.fg("success", "✓");
 	const titleMeta = running.length > 0 ? `${running.length} working` : `${activities.length} visible`;
@@ -697,7 +835,7 @@ function renderCompactActivityList(
 		const branch = isLast ? "└─" : "├─";
 		const child = isLast ? "   " : "│  ";
 		lines.push(truncateToWidth(`${theme.fg("dim", branch)} ${formatActivityHeadline(activity, theme)}`, width));
-		lines.push(truncateToWidth(`${theme.fg("dim", child + "├ tools ")}${theme.fg("muted", formatActivityToolStream(activity, theme, width))}`, width));
+		lines.push(truncateToWidth(`${theme.fg("dim", child + "├ tools ")}${theme.fg("muted", formatActivityToolStream(activity, theme, width, resolvedColors))}`, width));
 		const output = activity.errors[0]
 			? `error: ${activity.errors[activity.errors.length - 1]}`
 			: textTail(activity.text, 110) || (activity.prompt ? `prompt: ${textHead(activity.prompt, 90)}` : formatActivityStatusLabel(activity));
@@ -711,11 +849,11 @@ function resolveListMaxAgents(options: MastraAgentsWidgetOptions): number {
 	return Math.max(1, positiveInteger(options.listMaxAgents) ?? DEFAULT_WIDGET_LIST_MAX_AGENTS);
 }
 
-function formatActivityToolStream(activity: MastraAgentActivity, theme: Theme, width: number): string {
+function formatActivityToolStream(activity: MastraAgentActivity, theme: Theme, width: number, colors: Required<MastraAgentWidgetColors>): string {
 	const events = compactToolEvents(recentToolEvents(activity.details, 3));
 	if (events.length === 0) return activity.lastEvent || "waiting for tool events";
 	const previewWidth = Math.max(24, Math.floor(width / 2));
-	return events.map((event) => formatToolEvent(event, theme, previewWidth)).join(theme.fg("dim", " · "));
+	return events.map((event) => formatToolEvent(event, theme, previewWidth, colors)).join(theme.fg("dim", " · "));
 }
 
 function positiveInteger(value: unknown): number | undefined {
@@ -761,6 +899,14 @@ function logWidgetDebug(entry: MastraWidgetDebugEntry, options: MastraAgentsWidg
 export interface MastraAgentCardOptions {
 	expanded?: boolean;
 	isPartial?: boolean;
+	/** Theme color keys for prompt/tool/reasoning emphasis. */
+	colors?: MastraAgentWidgetColors;
+	/** In expanded detail mode, hide prompt and reasoning so only live stream content remains. */
+	streamOnly?: boolean;
+	/** Number of rows to move upward from the live tail in expanded detail mode. */
+	scrollOffset?: number;
+	/** Receives the content-clamped scroll offset used by the rendered card body. */
+	onScrollOffsetResolved?: (offsetRows: number) => void;
 	/** Optional body budget used by the async widget to stack multiple cards. */
 	maxBodyLines?: number;
 	/** Optional total card height. Short content is padded inside the card frame. */
@@ -779,6 +925,7 @@ export class MastraAgentCard implements Component {
 		const innerWidth = Math.max(1, width - 4);
 		const borderColor = statusColor(this.options.isPartial ? "running" : this.details.status);
 		const th = this.theme;
+		const colors = resolveWidgetColors(this.options.colors);
 		const lines: string[] = [];
 		const border = (s: string) => th.fg(borderColor, s);
 		const topLabel = ` Mastra: ${this.details.agentId} `;
@@ -795,9 +942,9 @@ export class MastraAgentCard implements Component {
 
 		const pinnedBodyLines: string[] = [];
 		const prompt = this.details.prompt?.trim();
-		if (prompt) {
-			pinnedBodyLines.push(th.fg("muted", "Prompt"));
-			pinnedBodyLines.push(...renderPromptLines(prompt, innerWidth, this.options.expanded === true, th));
+		if (prompt && !this.options.streamOnly) {
+			pinnedBodyLines.push(th.fg("text", "Prompt"));
+			pinnedBodyLines.push(...renderPromptLines(prompt, innerWidth, this.options.expanded === true, th, colors.prompt));
 		}
 
 		const bodyLines: string[] = [];
@@ -805,7 +952,7 @@ export class MastraAgentCard implements Component {
 		if (toolEvents.length > 0) {
 			bodyLines.push(th.fg("muted", "Tools"));
 			for (const event of toolEvents) {
-				bodyLines.push(...formatToolEventLines(event, th, innerWidth, this.options.expanded === true));
+				bodyLines.push(...formatToolEventLines(event, th, innerWidth, this.options.expanded === true, colors));
 			}
 		}
 
@@ -815,12 +962,10 @@ export class MastraAgentCard implements Component {
 		bodyLines.push(th.fg("muted", "Output"));
 		bodyLines.push(...renderMarkdownLines(markdownTail(text, textLimit), innerWidth));
 
-		if (this.details.reasoning && this.options.expanded) {
+		if (this.details.reasoning && this.options.expanded && !this.options.streamOnly) {
 			bodyLines.push("");
-			bodyLines.push(th.fg("muted", "Reasoning"));
-			for (const wrapped of wrapTextWithAnsi(th.fg("dim", textTail(this.details.reasoning, 1200)), innerWidth)) {
-				bodyLines.push(wrapped);
-			}
+			bodyLines.push(th.fg("text", "Reasoning"));
+			bodyLines.push(...renderMarkdownLines(markdownTail(this.details.reasoning, 4_000), innerWidth, { color: (value) => th.fg(colors.reasoning, value), italic: true }));
 		}
 
 		if (this.details.errors.length > 0) {
@@ -846,7 +991,13 @@ export class MastraAgentCard implements Component {
 		const fixedBodyLines = fixedTotalLines !== undefined ? Math.max(0, fixedTotalLines - 2) : undefined;
 		const bodyLimit = fixedBodyLines ?? this.options.maxBodyLines ?? (this.options.expanded ? EXPANDED_CARD_BODY_LINES : COLLAPSED_CARD_BODY_LINES);
 		const remainingBodyLimit = Math.max(0, bodyLimit - pinnedBodyLines.length);
-		const scrolledBody = remainingBodyLimit > 0 ? [...pinnedBodyLines, ...tailLines(bodyLines, remainingBodyLimit, th)] : tailLines(pinnedBodyLines, bodyLimit, th);
+		const scrollOffset = this.options.expanded ? nonNegativeInteger(this.options.scrollOffset) ?? 0 : 0;
+		const viewport =
+			remainingBodyLimit > 0
+				? sliceViewportLines(bodyLines, remainingBodyLimit, scrollOffset, th)
+				: sliceViewportLines(pinnedBodyLines, bodyLimit, scrollOffset, th);
+		this.options.onScrollOffsetResolved?.(viewport.offset);
+		const scrolledBody = remainingBodyLimit > 0 ? [...pinnedBodyLines, ...viewport.lines] : viewport.lines;
 		const framedBody =
 			fixedBodyLines !== undefined && scrolledBody.length < fixedBodyLines
 				? [...scrolledBody, ...Array.from({ length: fixedBodyLines - scrolledBody.length }, () => "")]
@@ -957,6 +1108,14 @@ function formatActivityStatusLabel(activity: MastraAgentActivity): string {
 	return activity.status;
 }
 
+function resolveWidgetColors(colors?: MastraAgentWidgetColors): Required<MastraAgentWidgetColors> {
+	return {
+		prompt: colors?.prompt ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.prompt,
+		tool: colors?.tool ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.tool,
+		reasoning: colors?.reasoning ?? DEFAULT_MASTRA_AGENT_WIDGET_COLORS.reasoning,
+	};
+}
+
 function activityIcon(activity: MastraAgentActivity, theme: Theme): string {
 	if (activity.status === "running") return theme.fg("accent", "●");
 	if (activity.status === "done") return theme.fg("success", "✓");
@@ -970,12 +1129,12 @@ function recentToolEvents(details: MastraAgentCallDetails, limit: number): Mastr
 		.slice(-limit);
 }
 
-function formatToolEvent(event: MastraToolEvent, theme: Theme, previewWidth: number): string {
+function formatToolEvent(event: MastraToolEvent, theme: Theme, previewWidth: number, colors: Required<MastraAgentWidgetColors>): string {
 	const icon = toolEventIcon(event, theme);
 	const rawName = event.name ?? event.id ?? "tool";
-	const name = theme.fg("accent", displayToolName(rawName));
+	const name = theme.fg("text", displayToolName(rawName));
 	const detail = event.type === "result" ? formatToolResultSummary(rawName, event.args, event.result, previewWidth) : formatToolArgs(rawName, event.args, previewWidth);
-	const preview = detail ? ` ${theme.fg("dim", detail)}` : "";
+	const preview = detail ? ` ${theme.fg(colors.tool, detail)}` : "";
 	return `${icon} ${name}${preview}`;
 }
 
@@ -988,10 +1147,10 @@ function compactToolEvents(events: MastraToolEvent[]): MastraToolEvent[] {
 	});
 }
 
-function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: number, expanded: boolean): string[] {
+function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: number, expanded: boolean, colors: Required<MastraAgentWidgetColors>): string[] {
 	const icon = toolEventIcon(event, theme);
 	const rawName = event.name ?? event.id ?? "tool";
-	const name = theme.fg("accent", displayToolName(rawName));
+	const name = theme.fg("text", displayToolName(rawName));
 	const prefix = `${icon} ${name}`;
 	const detail = event.type === "result"
 		? formatToolResultSummary(rawName, event.args, event.result, width)
@@ -999,14 +1158,15 @@ function formatToolEventLines(event: MastraToolEvent, theme: Theme, width: numbe
 	if (!detail) return [truncateToWidth(prefix, width)];
 
 	if (!expanded || event.type !== "result") {
-		return wrapTextWithAnsi(`${prefix} ${theme.fg("dim", detail)}`, width);
+		return wrapTextWithAnsi(`${prefix} ${theme.fg(colors.tool, detail)}`, width);
 	}
 
-	const lines = wrapTextWithAnsi(`${prefix} ${theme.fg("dim", detail)}`, width);
+	const lines = wrapTextWithAnsi(`${prefix} ${theme.fg(colors.tool, detail)}`, width);
 	const output = toolResultText(event.result);
 	if (!output || isShortSummary(detail, output)) return lines;
-	for (const line of output.split("\n").slice(0, 10)) {
-		lines.push(truncateToWidth(theme.fg("dim", `  ⎿ ${line}`), width));
+	const renderedOutput = renderMarkdownLines(markdownTail(output, 3_000), Math.max(1, width - 4));
+	for (const line of renderedOutput.slice(0, 12)) {
+		lines.push(truncateToWidth(`${theme.fg("dim", "  ⎿ ")}${line}`, width));
 	}
 	return lines;
 }
@@ -1156,28 +1316,39 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function toolEventIcon(event: MastraToolEvent, theme: Theme): string {
 	if (event.type === "result") return theme.fg("success", "✓");
 	if (event.type === "error") return theme.fg("error", "✗");
-	if (event.type === "call") return theme.fg("accent", "→");
+	if (event.type === "call") return theme.fg("text", "→");
 	return theme.fg("muted", "…");
 }
 
-function toolEventDetail(event: MastraToolEvent): unknown {
-	if (event.type === "error") return event.error;
-	if (event.type === "result") return event.result;
-	return event.args;
-}
-
-function renderMarkdownLines(markdown: string, width: number): string[] {
+function renderMarkdownLines(markdown: string, width: number, defaultTextStyle?: DefaultTextStyle): string[] {
 	try {
-		return new Markdown(markdown, 0, 0, getMarkdownTheme()).render(width);
+		return new Markdown(markdown, 0, 0, getMarkdownTheme(), defaultTextStyle).render(width);
 	} catch {
-		return wrapTextWithAnsi(markdown, width);
+		try {
+			return new Markdown(markdown, 0, 0, FALLBACK_MARKDOWN_THEME, defaultTextStyle).render(width);
+		} catch {
+			return wrapTextWithAnsi(markdown, width);
+		}
 	}
 }
 
-function tailLines(lines: string[], limit: number, theme: Theme): string[] {
-	if (lines.length <= limit) return lines;
-	const kept = Math.max(1, limit - 1);
-	return [theme.fg("dim", `… ${lines.length - kept} earlier lines`), ...lines.slice(-kept)];
+function sliceViewportLines(lines: string[], limit: number, scrollOffset: number, theme: Theme): { lines: string[]; offset: number } {
+	if (limit <= 0) return { lines: [], offset: 0 };
+	if (lines.length <= limit) return { lines, offset: 0 };
+	const maxOffset = Math.max(0, lines.length - limit);
+	const offset = Math.min(Math.max(0, Math.floor(scrollOffset)), maxOffset);
+	const end = Math.max(limit, lines.length - offset);
+	const start = Math.max(0, end - limit);
+	const visible = lines.slice(start, end);
+	const hiddenBefore = start;
+	const hiddenAfter = Math.max(0, lines.length - end);
+	if (hiddenBefore > 0 && visible.length > 0) {
+		visible[0] = theme.fg("dim", `… ${hiddenBefore} earlier lines`);
+	}
+	if (hiddenAfter > 0 && visible.length > 0) {
+		visible[visible.length - 1] = theme.fg("dim", `… ${hiddenAfter} later lines`);
+	}
+	return { lines: visible, offset };
 }
 
 function headLines(lines: string[], limit: number, theme: Theme): string[] {
@@ -1186,12 +1357,12 @@ function headLines(lines: string[], limit: number, theme: Theme): string[] {
 	return [...lines.slice(0, kept), theme.fg("dim", `… ${lines.length - kept} more prompt lines`)];
 }
 
-function renderPromptLines(prompt: string, width: number, expanded: boolean, theme: Theme): string[] {
+function renderPromptLines(prompt: string, width: number, expanded: boolean, theme: Theme, color: ThemeColor): string[] {
 	const maxChars = expanded ? 2_000 : 500;
 	const maxLines = expanded ? EXPANDED_PROMPT_LINES : COLLAPSED_PROMPT_LINES;
 	const trimmed = filterPromptScaffolding(prompt).trim();
 	const clipped = trimmed.length <= maxChars ? trimmed : `${trimmed.slice(0, Math.max(0, maxChars - 1))}…`;
-	const lines = clipped.split("\n").flatMap((line) => (line.length === 0 ? [""] : wrapTextWithAnsi(theme.fg("dim", line), width)));
+	const lines = clipped.split("\n").flatMap((line) => (line.length === 0 ? [""] : wrapTextWithAnsi(theme.fg(color, line), width)));
 	return headLines(lines, maxLines, theme);
 }
 
