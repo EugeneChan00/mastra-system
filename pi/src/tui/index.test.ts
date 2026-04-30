@@ -319,6 +319,21 @@ test("MastraAgentsWidget keeps queued response card slots stable until explicit 
 	assert.deepEqual(ended.map(agentLabel), ["agent-2", "agent-3", "agent-4"]);
 });
 
+test("MastraAgentActivityStore ignores late updates after explicit end", () => {
+	const store = new MastraAgentActivityStore(60_000);
+	store.start("call-1", { agentId: "agent-1", message: "task" } as MastraAgentCallInput, makeDetails({
+		agentId: "agent-1",
+		status: "running",
+		text: "running",
+	}));
+
+	store.end("call-1");
+	store.update("call-1", makeDetails({ agentId: "agent-1", status: "aborted", text: "late update" }));
+	store.finish("call-1", makeDetails({ agentId: "agent-1", status: "aborted", text: "late finish" }));
+
+	assert.deepEqual(store.snapshot(), []);
+});
+
 test("MastraAgentsWidget keeps newest jobs visible with newest at the bottom", () => {
 	const store = new MastraAgentActivityStore(60_000);
 	for (let i = 1; i <= 4; i++) {

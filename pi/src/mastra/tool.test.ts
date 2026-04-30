@@ -11,6 +11,7 @@ import {
 	MASTRA_AGENT_QUERY_PARAMETERS,
 } from "./tool.js";
 import { MASTRA_PI_AGENT_JOB_WORKFLOW_ID } from "../const.js";
+import { MastraAgentActivityStore } from "../tui/index.js";
 import { MastraHttpClient } from "./client.js";
 import { defaultResourceId } from "./memory.js";
 
@@ -672,6 +673,36 @@ test("async agent manager detachAll also stops direct fallback jobs without comp
 	assert.deepEqual(sinkEvents.filter((event) => event === "end"), ["end"]);
 	assert.deepEqual(sinkEvents.filter((event) => event === "reset"), ["reset"]);
 	assert.equal(completed, false);
+});
+
+test("async agent manager cancellation keeps late direct stream updates out of activity store", async () => {
+	const activityStore = new MastraAgentActivityStore();
+	let streamStarted = false;
+	const manager = new MastraAsyncAgentManager(
+		{
+			async *streamAgent(_agentId: string, _request: unknown, options: { signal?: AbortSignal } = {}) {
+				streamStarted = true;
+				yield { type: "text-delta", text: "started" };
+				await new Promise<void>((resolve) => {
+					options.signal?.addEventListener("abort", () => resolve(), { once: true });
+				});
+				yield { type: "text-delta", text: "late update after cancel" };
+			},
+		} as any,
+		{
+			activitySink: activityStore,
+			useWorkflowJobs: false,
+		},
+	);
+
+	await manager.start({ agentId: "agent", message: "prompt", jobId: "cancel-direct-late" });
+	await waitFor(() => streamStarted && activityStore.snapshot().length === 1);
+	const summary = await manager.cancel("cancel-direct-late", "stop now");
+	assert.equal(summary?.lifecycleStatus, "ended");
+	assert.deepEqual(activityStore.snapshot(), []);
+
+	await waitFor(() => manager.get("cancel-direct-late")?.status === "aborted");
+	assert.deepEqual(activityStore.snapshot(), []);
 });
 
 test("async agent manager cancels workflow jobs without queueing a completion reminder", async () => {

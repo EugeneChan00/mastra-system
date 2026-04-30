@@ -98,27 +98,32 @@ export interface MastraAgentActivitySink {
 
 export class MastraAgentActivityStore implements MastraAgentActivitySink {
 	private readonly activities = new Map<string, MastraAgentActivity>();
+	private readonly endedToolCallIds = new Set<string>();
 	private readonly listeners = new Set<() => void>();
 	private nextOrder = 0;
 
 	constructor(private readonly lingerMs = DEFAULT_ACTIVITY_LINGER_MS) {}
 
 	start(toolCallId: string, params: MastraAgentCallInput, details: MastraAgentCallDetails): void {
+		this.endedToolCallIds.delete(toolCallId);
 		this.activities.set(toolCallId, activityFromDetails(toolCallId, details, undefined, params.message, "working", this.nextOrder++));
 		this.notify();
 	}
 
 	update(toolCallId: string, details: MastraAgentCallDetails): void {
+		if (this.endedToolCallIds.has(toolCallId)) return;
 		this.activities.set(toolCallId, activityFromDetails(toolCallId, details, this.activities.get(toolCallId)));
 		this.notify();
 	}
 
 	finish(toolCallId: string, details: MastraAgentCallDetails): void {
+		if (this.endedToolCallIds.has(toolCallId)) return;
 		this.activities.set(toolCallId, activityFromDetails(toolCallId, details, this.activities.get(toolCallId), undefined, "agent_response_queued"));
 		this.notify();
 	}
 
 	end(toolCallId: string): void {
+		this.endedToolCallIds.add(toolCallId);
 		if (!this.activities.delete(toolCallId)) return;
 		this.notify();
 	}
@@ -146,6 +151,7 @@ export class MastraAgentActivityStore implements MastraAgentActivitySink {
 
 	reset(): void {
 		this.activities.clear();
+		this.endedToolCallIds.clear();
 		this.nextOrder = 0;
 		this.notify();
 	}
