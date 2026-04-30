@@ -417,11 +417,13 @@ test("async agent manager drives workflow jobs through working to queued complet
 	const workflowRunReads: any[] = [];
 	const sinkEvents: string[] = [];
 	const completions: any[] = [];
+	let latestDetails: any;
 	const manager = new MastraAsyncAgentManager(
 		{
 			async *streamWorkflow(workflowId: string, runId: string, payload: unknown) {
 				workflowStarts.push({ workflowId, runId, payload });
 				yield { type: "pi-agent-stream-chunk", payload: { chunk: { type: "text-delta", text: "hello" } } };
+				yield { type: "pi-agent-stream-chunk", payload: { chunk: { type: "reasoning", textDelta: "workflow why" } } };
 				yield { type: "pi-agent-stream-chunk", payload: { chunk: { type: "finish", usage: { totalTokens: 7 } } } };
 			},
 			async *observeWorkflow(workflowId: string, runId: string, payload: unknown) {
@@ -442,7 +444,8 @@ test("async agent manager drives workflow jobs through working to queued complet
 				start() {
 					sinkEvents.push("start");
 				},
-				update() {
+				update(_toolCallId: string, details: any) {
+					latestDetails = details;
 					sinkEvents.push("update");
 				},
 				finish() {
@@ -488,6 +491,7 @@ test("async agent manager drives workflow jobs through working to queued complet
 	assert.equal(summary?.status, "done");
 	assert.equal(summary?.lifecycleStatus, "agent_response_queued");
 	assert.equal(summary?.textPreview, "hello");
+	assert.equal(latestDetails?.reasoning, "workflow why");
 	assert.equal(summary?.artifactPath, "/tmp/output.txt");
 	assert.equal(summary?.eventsPath, "/tmp/events.jsonl");
 	assert.ok(sinkEvents.filter((event) => event === "update").length >= 2, "workflow chunks should update the live activity card");

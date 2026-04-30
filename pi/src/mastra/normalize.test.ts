@@ -18,6 +18,15 @@ test("normalizes payload text deltas from current Mastra streams", () => {
 	assert.equal(details.reasoning, "why");
 });
 
+test("normalizes AI SDK textDelta reasoning stream variants", () => {
+	const details = makeDetails();
+	applyNormalizedEvent(details, normalizeMastraChunk({ type: "text-delta", textDelta: "hello" }));
+	applyNormalizedEvent(details, normalizeMastraChunk({ type: "reasoning", textDelta: "why" }));
+	applyNormalizedEvent(details, normalizeMastraChunk({ type: "reasoning-delta", payload: { textDelta: " now" } }));
+	assert.equal(details.text, "hello");
+	assert.equal(details.reasoning, "why now");
+});
+
 test("normalizes tool lifecycle events", () => {
 	const details = makeDetails();
 	applyNormalizedEvent(details, normalizeMastraChunk({ type: "tool-call", toolCallId: "1", toolName: "read", args: { path: "x" } }));

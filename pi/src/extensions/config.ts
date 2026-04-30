@@ -2,25 +2,33 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse } from "yaml";
-import type { MastraAgentsViewMode, MastraAgentsWidgetOptions } from "../tui/index.js";
+import type { ThemeColor } from "@mariozechner/pi-coding-agent";
+import { DEFAULT_MASTRA_AGENT_WIDGET_COLORS, type MastraAgentWidgetColors, type MastraAgentsViewMode, type MastraAgentsWidgetOptions } from "../tui/index.js";
 
 export const MASTRA_AGENT_EXTENSION_CONFIG_KEY = "mastra-agent-extension";
-export const DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS: Required<Pick<MastraAgentsWidgetOptions, "maxCards" | "maxLines" | "listMaxAgents">> = {
+export const DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS: Required<Pick<MastraAgentsWidgetOptions, "maxCards" | "maxLines" | "listMaxAgents" | "colors">> = {
 	maxCards: 4,
 	maxLines: 60,
 	listMaxAgents: 5,
+	colors: { ...DEFAULT_MASTRA_AGENT_WIDGET_COLORS },
 };
 export const DEFAULT_MASTRA_AGENT_VIEW_MODE: MastraAgentsViewMode = "list";
 export const DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS: MastraAgentExtensionShortcuts = {
-	viewMode: "ctrl+h",
+	viewMode: "alt+h",
 	nextAgent: "ctrl+down",
 	previousAgent: "ctrl+up",
+	detailScrollDown: "alt+j",
+	detailScrollUp: "alt+k",
+	detailStreamOnly: "alt+s",
 };
 
 export interface MastraAgentExtensionShortcuts {
 	viewMode: string;
 	nextAgent: string;
 	previousAgent: string;
+	detailScrollDown: string;
+	detailScrollUp: string;
+	detailStreamOnly: string;
 }
 
 export interface MastraAgentExtensionConfigResult {
@@ -98,15 +106,20 @@ function parseMastraAgentExtensionConfig(raw: string, path: string): MastraAgent
 	const debug = readBoolean(section.debug, "debug", warnings);
 	const debugPiRedraw = readBoolean(section.debugPiRedraw, "debugPiRedraw", warnings);
 	const debugLogPath = readString(section.debugLogPath, "debugLogPath", warnings);
+	const colors = readWidgetColors(section.colors, "colors", warnings);
 	const defaultViewMode = readViewMode(section.defaultViewMode, "defaultViewMode", warnings);
 	const viewModeShortcut = readString(section.viewModeShortcut, "viewModeShortcut", warnings);
 	const nextAgentShortcut = readString(section.nextAgentShortcut, "nextAgentShortcut", warnings);
 	const previousAgentShortcut = readString(section.previousAgentShortcut, "previousAgentShortcut", warnings);
+	const detailScrollDownShortcut = readString(section.detailScrollDownShortcut, "detailScrollDownShortcut", warnings);
+	const detailScrollUpShortcut = readString(section.detailScrollUpShortcut, "detailScrollUpShortcut", warnings);
+	const detailStreamOnlyShortcut = readString(section.detailStreamOnlyShortcut, "detailStreamOnlyShortcut", warnings);
 	return {
 		options: {
 			maxCards: maxCards ?? DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.maxCards,
 			maxLines: maxLines ?? DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.maxLines,
 			listMaxAgents: listMaxAgents ?? DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS.listMaxAgents,
+			colors: { ...DEFAULT_MASTRA_AGENT_WIDGET_COLORS, ...(colors ?? {}) },
 			...(listMaxLines !== undefined ? { listMaxLines } : {}),
 			...(reservedRows !== undefined ? { reservedRows } : {}),
 			...(debug !== undefined ? { debug } : {}),
@@ -118,6 +131,9 @@ function parseMastraAgentExtensionConfig(raw: string, path: string): MastraAgent
 			viewMode: viewModeShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.viewMode,
 			nextAgent: nextAgentShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.nextAgent,
 			previousAgent: previousAgentShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.previousAgent,
+			detailScrollDown: detailScrollDownShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.detailScrollDown,
+			detailScrollUp: detailScrollUpShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.detailScrollUp,
+			detailStreamOnly: detailStreamOnlyShortcut ?? DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS.detailStreamOnly,
 		},
 		path,
 		found: true,
@@ -164,11 +180,86 @@ function readString(value: unknown, name: string, warnings: string[]): string | 
 	return undefined;
 }
 
+function readWidgetColors(value: unknown, name: string, warnings: string[]): MastraAgentWidgetColors | undefined {
+	if (value === undefined) return undefined;
+	if (!isRecord(value)) {
+		warnings.push(name);
+		return undefined;
+	}
+	const colors: MastraAgentWidgetColors = {};
+	const prompt = readThemeColor(value.prompt, `${name}.prompt`, warnings);
+	const tool = readThemeColor(value.tool, `${name}.tool`, warnings);
+	const reasoning = readThemeColor(value.reasoning, `${name}.reasoning`, warnings);
+	if (prompt !== undefined) colors.prompt = prompt;
+	if (tool !== undefined) colors.tool = tool;
+	if (reasoning !== undefined) colors.reasoning = reasoning;
+	return colors;
+}
+
+function readThemeColor(value: unknown, name: string, warnings: string[]): ThemeColor | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value === "string" && isThemeColor(value)) return value;
+	warnings.push(name);
+	return undefined;
+}
+
 function readViewMode(value: unknown, name: string, warnings: string[]): MastraAgentsViewMode | undefined {
 	if (value === undefined) return undefined;
 	if (value === "list" || value === "cards" || value === "detail") return value;
 	warnings.push(name);
 	return undefined;
+}
+
+const VALID_THEME_COLORS: readonly ThemeColor[] = [
+	"accent",
+	"border",
+	"borderAccent",
+	"borderMuted",
+	"success",
+	"error",
+	"warning",
+	"muted",
+	"dim",
+	"text",
+	"thinkingText",
+	"userMessageText",
+	"customMessageText",
+	"customMessageLabel",
+	"toolTitle",
+	"toolOutput",
+	"mdHeading",
+	"mdLink",
+	"mdLinkUrl",
+	"mdCode",
+	"mdCodeBlock",
+	"mdCodeBlockBorder",
+	"mdQuote",
+	"mdQuoteBorder",
+	"mdHr",
+	"mdListBullet",
+	"toolDiffAdded",
+	"toolDiffRemoved",
+	"toolDiffContext",
+	"syntaxComment",
+	"syntaxKeyword",
+	"syntaxFunction",
+	"syntaxVariable",
+	"syntaxString",
+	"syntaxNumber",
+	"syntaxType",
+	"syntaxOperator",
+	"syntaxPunctuation",
+	"thinkingOff",
+	"thinkingMinimal",
+	"thinkingLow",
+	"thinkingMedium",
+	"thinkingHigh",
+	"thinkingXhigh",
+	"bashMode",
+];
+
+function isThemeColor(value: string): value is ThemeColor {
+	return (VALID_THEME_COLORS as readonly string[]).includes(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

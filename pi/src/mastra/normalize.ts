@@ -17,9 +17,10 @@ export function normalizeMastraChunk(chunk: unknown): NormalizedMastraEvent {
 	const type = stringValue(chunk.type);
 	switch (type) {
 		case "text-delta":
-			return { kind: "text-delta", text: textFrom(chunk, "text", "delta"), raw: chunk };
+			return { kind: "text-delta", text: textFrom(chunk, "text", "delta", "textDelta"), raw: chunk };
 		case "reasoning-delta":
-			return { kind: "reasoning-delta", text: textFrom(chunk, "text", "delta", "reasoning"), raw: chunk };
+		case "reasoning":
+			return { kind: "reasoning-delta", text: textFrom(chunk, "text", "delta", "textDelta", "reasoning"), raw: chunk };
 		case "tool-call":
 			return { kind: "tool", event: makeToolEvent("call", chunk) };
 		case "tool-result":
@@ -118,7 +119,11 @@ function textFrom(chunk: Record<string, unknown>, ...keys: string[]): string {
 	for (const key of keys) {
 		const value = chunk[key];
 		if (typeof value === "string") return value;
-		if (isRecord(value) && typeof value.text === "string") return value.text;
+		if (isRecord(value)) {
+			if (typeof value.text === "string") return value.text;
+			if (typeof value.delta === "string") return value.delta;
+			if (typeof value.textDelta === "string") return value.textDelta;
+		}
 	}
 	if (isRecord(chunk.payload)) {
 		return textFrom(chunk.payload, ...keys);
