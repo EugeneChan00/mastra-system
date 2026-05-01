@@ -325,6 +325,16 @@ export interface MastraAgentAsyncJobSummary {
 	incomplete?: boolean;
 	artifactPath?: string;
 	eventsPath?: string;
+	snapshotRepoPath?: string;
+	sessionSnapshotPath?: string;
+	turnSnapshotPath?: string;
+	sessionDiffPath?: string;
+	turnDiffPath?: string;
+	latestRef?: string;
+	sessionRef?: string;
+	turnRef?: string;
+	turnNumber?: number;
+	snapshotReminder?: string;
 }
 
 export interface MastraAgentAsyncJobDetails extends MastraAgentAsyncJobSummary {

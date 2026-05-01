@@ -18,6 +18,9 @@ Project-specific execution policy:
 - Use the configured Mastra workspace as the normal coding environment.
 - Prefer list_files and read_file before deciding on edits.
 - Prefer write_file or edit_file for file changes when project-file mutation is required.
+- Every write_file and edit_file result includes snapshotPath, snapshotEventId, turnDiff, and sessionDiff. Treat these as audit anchors.
+- Use read_snapshots between delegation rounds or after subagent edits to inspect session/turn diffs before claiming what changed.
+- When delegating implementation or validation, pass snapshotPath, snapshotEventId, artifact paths, and diff/log paths through input_args when available so downstream agents can audit the exact work.
 - Preserve unrelated worktree changes; never revert user work unless explicitly instructed.`;
 
 export const sharedToolPrompts = {

@@ -20,6 +20,7 @@ import {
   resolveMastraAgentHarnessMode,
   type ResolvedMastraAgentHarnessMode,
 } from "../agents/harness.js";
+import { captureTurnSnapshot, initializeSessionSnapshot, type SnapshotCapture } from "../tools/snapshots.js";
 import { resolveWorkspacePath } from "../workspace.js";
 
 const inputArgsSchema = z.record(z.string()).optional();
@@ -69,6 +70,16 @@ const piAgentJobOutputSchema = z.object({
   artifactPath: z.string(),
   eventsPath: z.string(),
   errors: z.array(z.string()),
+  snapshotRepoPath: z.string().optional(),
+  sessionSnapshotPath: z.string().optional(),
+  turnSnapshotPath: z.string().optional(),
+  sessionDiffPath: z.string().optional(),
+  turnDiffPath: z.string().optional(),
+  latestRef: z.string().optional(),
+  sessionRef: z.string().optional(),
+  turnRef: z.string().optional(),
+  turnNumber: z.number().int().optional(),
+  snapshotReminder: z.string().optional(),
 });
 
 export const runPiAgentJobStep = createStep({
@@ -89,6 +100,13 @@ export const runPiAgentJobStep = createStep({
     const eventsPath = path.join(artifactDir, "events.jsonl");
     const errors: string[] = [];
     let text = "";
+    let snapshotCapture: SnapshotCapture | undefined;
+    const snapshotOwner = {
+      agentId: inputData.agentId,
+      sessionId: inputData.piSessionId ?? inputData.resourceId,
+      runId: inputData.runId ?? inputData.jobId,
+      childId: inputData.jobId,
+    };
     let resolvedHarnessMode = inputData.harnessMode;
     let resolvedHarnessModeId = inputData.harnessModeId ?? inputData.harnessMode ?? inputData.hardnessMode;
 
@@ -101,6 +119,7 @@ export const runPiAgentJobStep = createStep({
       });
       resolvedHarnessMode = resolvedMode.harnessMode;
       resolvedHarnessModeId = resolvedMode.harnessModeId;
+      const initialSnapshot = await initializeSessionSnapshot(snapshotOwner);
       const requestContext = {
         ...(inputData.requestContext ?? {}),
         [REQUEST_CONTEXT_ACTIVE_AGENT_ID_KEY]: resolvedMode.activeAgentId,
@@ -108,6 +127,10 @@ export const runPiAgentJobStep = createStep({
         [REQUEST_CONTEXT_HARNESS_MODE_ID_KEY]: resolvedMode.harnessModeId,
         [REQUEST_CONTEXT_HARDNESS_MODE_KEY]: resolvedMode.harnessModeId,
         ...(inputData.input_args && Object.keys(inputData.input_args).length > 0 ? { input_args: inputData.input_args } : {}),
+        snapshotRepoPath: initialSnapshot.snapshotRepoPath,
+        sessionSnapshotPath: initialSnapshot.sessionSnapshotPath,
+        latestRef: initialSnapshot.latestRef,
+        sessionRef: initialSnapshot.sessionRef,
       };
       text = await streamHarnessMessage({
         harness,
@@ -121,9 +144,15 @@ export const runPiAgentJobStep = createStep({
         requestContext,
         abortSignal,
       });
+      snapshotCapture = await captureTurnSnapshot(snapshotOwner);
+      await emitSnapshotReminder({ writer, eventsPath, artifactPath, capture: snapshotCapture });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(message);
+      if (!snapshotCapture) {
+        snapshotCapture = await captureTurnSnapshot(snapshotOwner).catch(() => undefined);
+        if (snapshotCapture) await emitSnapshotReminder({ writer, eventsPath, artifactPath, capture: snapshotCapture });
+      }
       const chunk = { type: "error", payload: { message }, message };
       await writer.write(chunk);
       await appendJsonLine(eventsPath, { timestamp: Date.now(), chunk });
@@ -145,6 +174,7 @@ export const runPiAgentJobStep = createStep({
         artifactPath,
         eventsPath,
         errors,
+        ...snapshotOutput(snapshotCapture),
       };
     }
 
@@ -165,6 +195,7 @@ export const runPiAgentJobStep = createStep({
       artifactPath,
       eventsPath,
       errors,
+      ...snapshotOutput(snapshotCapture),
     };
   },
 });
@@ -181,6 +212,43 @@ const piAgentJobWorkflow = createWorkflow({
 export const piAgentJobWorkflows = {
   piAgentJob: piAgentJobWorkflow,
 };
+
+async function emitSnapshotReminder({
+  writer,
+  eventsPath,
+  artifactPath,
+  capture,
+}: {
+  writer: { write(chunk: unknown): Promise<void> };
+  eventsPath: string;
+  artifactPath: string;
+  capture: SnapshotCapture;
+}): Promise<void> {
+  const chunk = {
+    type: "snapshot-audit-context",
+    payload: snapshotOutput(capture),
+    text: capture.reminder,
+  };
+  await writer.write(chunk);
+  await appendJsonLine(eventsPath, { timestamp: Date.now(), chunk });
+  await appendFile(artifactPath, `\n\n${capture.reminder}\n`, "utf8");
+}
+
+function snapshotOutput(capture: SnapshotCapture | undefined) {
+  if (!capture) return {};
+  return {
+    snapshotRepoPath: capture.snapshotRepoPath,
+    sessionSnapshotPath: capture.sessionSnapshotPath,
+    turnSnapshotPath: capture.turnSnapshotPath,
+    sessionDiffPath: capture.sessionDiffPath,
+    turnDiffPath: capture.turnDiffPath,
+    latestRef: capture.latestRef,
+    sessionRef: capture.sessionRef,
+    turnRef: capture.turnRef,
+    turnNumber: capture.turnNumber,
+    snapshotReminder: capture.reminder,
+  };
+}
 
 function formatPrompt(message: string, inputArgs: Record<string, string> | undefined): string {
   if (!inputArgs || Object.keys(inputArgs).length === 0) return message;

@@ -13,7 +13,9 @@ A strong delegation brief includes:
 - Stop condition: when to return instead of expanding the task.
 - Return shape: changed files, commands run, outputs observed, assumptions, blockers, risks, and recommended next step.
 
-Use structured input_args when the tool supports them. Put paths, issue IDs, artifact paths, transcript paths, workflow IDs, run IDs, and similar anchors into structured arguments instead of relying only on prose.
+Use structured input_args when the tool supports them. Put paths, issue IDs, artifact paths, snapshotPath, snapshotEventId, turn/session diff logs, transcript paths, workflow IDs, run IDs, and similar anchors into structured arguments instead of relying only on prose.
+
+When worker tools expose snapshotPath, snapshotEventId, turnDiff, or sessionDiff, inspect those snapshots between delegation rounds and after edit/write events before treating the worker's change summary as proven. Inspect turnDiff and sessionDiff from write/edit results before accepting implementation claims from workers.
 
 For async worker jobs, read the completed worker output before final synthesis unless the user explicitly opts out. A start receipt, queued status, or completion notification is not the result.
 

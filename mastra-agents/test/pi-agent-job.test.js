@@ -47,7 +47,7 @@ test("pi agent job workflow step streams agent output into artifacts and forward
 				jobId: "job-1",
 				jobName: "review",
 				piSessionId: "session-1",
-				runId: "workflow-run",
+				runId: `${uniqueId}-workflow-run`,
 				agentRunId: "agent-run",
 				agentId: "validator-agent",
 				harnessMode: "audit",
@@ -64,7 +64,7 @@ test("pi agent job workflow step streams agent output into artifacts and forward
 
 		assert.equal(result.status, "done");
 		assert.equal(result.text, "hello world");
-		assert.equal(result.runId, "workflow-run");
+		assert.equal(result.runId, `${uniqueId}-workflow-run`);
 		assert.equal(result.agentRunId, "agent-run");
 		assert.equal(result.harnessMode, "audit");
 		assert.equal(result.harnessModeId, "validator.audit");
@@ -88,7 +88,7 @@ test("pi agent job workflow step streams agent output into artifacts and forward
 		assert.match(streamPrompt, /<harness-mode id="validator\.audit" agent="validator" mode="audit">/);
 		assert.match(streamPrompt, /Review \$1/);
 		assert.match(streamPrompt, /- \$1: diff/);
-		assert.deepEqual(writerChunks, [
+		assert.deepEqual(writerChunks.slice(0, 3), [
 			{ type: "text-delta", text: "hello" },
 			{ type: "text-delta", text: " world" },
 			{
@@ -101,9 +101,14 @@ test("pi agent job workflow step streams agent output into artifacts and forward
 				},
 			},
 		]);
-		assert.equal(await readFile(result.artifactPath, "utf8"), "hello world");
+		assert.equal(writerChunks[3].type, "snapshot-audit-context");
+		assert.match(writerChunks[3].text, /Snapshot audit context:/);
+		assert.match(result.snapshotRepoPath, new RegExp(`\\.agents/exec/snapshots/mastra-agents/validator-agent/session-1/${uniqueId}-workflow-run`));
+		assert.match(result.turnDiffPath, /turns\/turn-1\.diff$/);
+		assert.match(await readFile(result.artifactPath, "utf8"), /hello world/);
+		assert.match(await readFile(result.artifactPath, "utf8"), /Snapshot audit context:/);
 		const events = (await readFile(result.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-		assert.equal(events.length, 3);
+		assert.equal(events.length, 4);
 		assert.deepEqual(events.map((event) => event.chunk), writerChunks);
 	} finally {
 		if (previousArtifactDir === undefined) delete process.env.MASTRA_PI_AGENT_JOB_DIR;
@@ -204,11 +209,13 @@ test("pi agent job workflow step reports agent stream errors and writes error ar
 
 		assert.equal(result.status, "error");
 		assert.deepEqual(result.errors, ["agent exploded"]);
-		assert.equal(writerChunks.length, 1);
-		assert.equal(writerChunks[0].type, "error");
+		assert.equal(writerChunks.length, 2);
+		assert.equal(writerChunks[0].type, "snapshot-audit-context");
+		assert.equal(writerChunks[1].type, "error");
 		assert.match(await readFile(result.artifactPath, "utf8"), /agent job error: agent exploded/);
 		const events = (await readFile(result.eventsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-		assert.equal(events[0].chunk.type, "error");
+		assert.equal(events[0].chunk.type, "snapshot-audit-context");
+		assert.equal(events[1].chunk.type, "error");
 	} finally {
 		if (previousArtifactDir === undefined) delete process.env.MASTRA_PI_AGENT_JOB_DIR;
 		else process.env.MASTRA_PI_AGENT_JOB_DIR = previousArtifactDir;

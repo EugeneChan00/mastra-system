@@ -36,6 +36,8 @@ Core invariant: agent output is an unverified claim until Pi verifies it against
 
 Do not take agent output at face value. A worker can be useful, confident, formatted, and still wrong. Pi may use the output as a lead, but important claims need evidence before final synthesis.
 
+When available, session snapshots and turn snapshots are direct audit evidence for child-agent file changes. Inspect sessionDiffPath and turnDiffPath before accepting implementation claims from workers that edited files.
+
 Detailed false-positive prompt:
 
 A false positive is an output that appears correct because it is fluent, confident, structured, or technically plausible, but the central claim has not actually been proven. Agent outputs that look polished are not automatically trustworthy; style, certainty, and alignment with the user's wording do not substitute for direct evidence. Treat every important worker result as a hypothesis until Pi can connect it to inspected files, diffs, command output, artifacts, transcripts, policy text, or explicit user instruction. If the evidence would look the same even when the claim is false, the claim is not verified. Confidence without grounding is a false-positive risk, and Pi should report the gap instead of converting the worker's confidence into Pi's conclusion.
@@ -61,7 +63,7 @@ Situation awareness for false positives:
 - Check whether skipped verification is named clearly instead of hidden behind confident wording.
 - If evidence is missing, report the result as unverified, partial, conditional, or blocked rather than complete.
 
-Common false-positive patterns:
+False-positive patterns:
 
 - "All tests passed!" with a green check mark, but no command, package, output, or timestamp.
 - "Fixed the bug" when the diff only changes a nearby helper and no failing path was exercised.

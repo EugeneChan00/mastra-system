@@ -11,6 +11,7 @@ import {
   workspaceAccessRoots,
   workspaceRoot,
 } from "../workspace-paths.js";
+import { readMutationSnapshots, recordMutationSnapshot } from "./snapshots.js";
 
 type WorkspaceFile = {
   path: string;
@@ -21,6 +22,7 @@ type ListFilesInput = z.input<typeof listFilesQuerySchema>;
 type ReadFileInput = z.input<typeof readFileQuerySchema>;
 type WriteFileInput = z.input<typeof writeFileQuerySchema>;
 type ReplaceInFileInput = z.input<typeof replaceInFileQuerySchema>;
+type ReadSnapshotsInput = z.input<typeof readSnapshotsQuerySchema>;
 
 const maxReadBytes = Number.parseInt(
   process.env.MASTRA_WORKSPACE_MAX_READ_BYTES ?? "200000",
@@ -72,10 +74,40 @@ const replaceInFileQuerySchema = z.object({
   replaceAll: z.boolean().default(false),
 });
 
+const mutationSnapshotResultFields = {
+  snapshotPath: z.string(),
+  snapshotEventId: z.string(),
+  turnDiff: z.string(),
+  sessionDiff: z.string(),
+} as const;
+
 const replaceInFileResultSchema = z.object({
   path: z.string(),
   replacements: z.number().int(),
+  ...mutationSnapshotResultFields,
 });
+
+const readSnapshotsQuerySchema = z.object({
+  maxEvents: z.number().int().min(1).max(200).default(20),
+  filePath: z.string().optional(),
+});
+
+const readSnapshotsResultSchema = z.object({
+  snapshotPath: z.string(),
+  events: z.array(
+    z.object({
+      eventId: z.string(),
+      timestamp: z.string(),
+      tool: z.enum(["write_file", "edit_file"]),
+      path: z.string(),
+      operation: z.enum(["create", "overwrite", "replace"]),
+      turnDiff: z.string(),
+      sessionDiff: z.string(),
+    }),
+  ),
+});
+
+const writeFileResultSchemaWithSnapshot = writeFileResultSchema.extend(mutationSnapshotResultFields);
 
 async function listDirectoryEntries(
   directoryPath: string,
@@ -154,6 +186,7 @@ async function executeWriteFile(query: WriteFileInput) {
   const filePath = resolveWorkspaceInputPath(query.filePath);
   const overwrite = query.overwrite ?? false;
   const existed = await fileExists(filePath);
+  const beforeContent = existed ? await fs.readFile(filePath, "utf8") : "";
 
   if (existed && !overwrite) {
     throw new Error("File already exists. Set overwrite=true to replace it.");
@@ -162,10 +195,21 @@ async function executeWriteFile(query: WriteFileInput) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, query.content, "utf8");
 
+  const workspacePath = toWorkspacePath(filePath);
+  const snapshot = await recordMutationSnapshot({
+    tool: "write_file",
+    filePath,
+    workspacePath,
+    operation: existed ? "overwrite" : "create",
+    beforeContent,
+    afterContent: query.content,
+  });
+
   return {
-    path: toWorkspacePath(filePath),
+    path: workspacePath,
     bytesWritten: Buffer.byteLength(query.content, "utf8"),
     overwritten: existed,
+    ...snapshot,
   };
 }
 
@@ -188,10 +232,25 @@ async function executeReplaceInFile(query: ReplaceInFileInput) {
 
   await fs.writeFile(filePath, updatedContent, "utf8");
 
+  const workspacePath = toWorkspacePath(filePath);
+  const snapshot = await recordMutationSnapshot({
+    tool: "edit_file",
+    filePath,
+    workspacePath,
+    operation: "replace",
+    beforeContent: content,
+    afterContent: updatedContent,
+  });
+
   return {
-    path: toWorkspacePath(filePath),
+    path: workspacePath,
     replacements: query.replaceAll ? matches : 1,
+    ...snapshot,
   };
+}
+
+async function executeReadSnapshots(query: ReadSnapshotsInput) {
+  return readMutationSnapshots(query);
 }
 
 export const workspaceSchemas = {
@@ -200,9 +259,11 @@ export const workspaceSchemas = {
   readFileQuery: readFileQuerySchema,
   readFileResult: readFileResultSchema,
   writeFileQuery: writeFileQuerySchema,
-  writeFileResult: writeFileResultSchema,
+  writeFileResult: writeFileResultSchemaWithSnapshot,
   replaceInFileQuery: replaceInFileQuerySchema,
   replaceInFileResult: replaceInFileResultSchema,
+  readSnapshotsQuery: readSnapshotsQuerySchema,
+  readSnapshotsResult: readSnapshotsResultSchema,
 };
 
 export const workspaceTools = {
@@ -224,7 +285,7 @@ export const workspaceTools = {
     id: "workspace.write-file",
     description: `Create or overwrite a UTF-8 text file under the configured workspace root. Relative paths resolve under ${workspaceRoot}; absolute paths are allowed under: ${allowedWorkspaceRootsDescription()}.`,
     inputSchema: writeFileQuerySchema,
-    outputSchema: writeFileResultSchema,
+    outputSchema: writeFileResultSchemaWithSnapshot,
     execute: executeWriteFile,
   }),
   replaceInFile: createTool({
@@ -233,5 +294,12 @@ export const workspaceTools = {
     inputSchema: replaceInFileQuerySchema,
     outputSchema: replaceInFileResultSchema,
     execute: executeReplaceInFile,
+  }),
+  readSnapshots: createTool({
+    id: "workspace.read-snapshots",
+    description: `Read session and turn diff snapshots captured after workspace write_file and edit_file events. Use this to audit subagent work between turns.`,
+    inputSchema: readSnapshotsQuerySchema,
+    outputSchema: readSnapshotsResultSchema,
+    execute: executeReadSnapshots,
   }),
 };

@@ -21,7 +21,8 @@ export const supervisorModePrompts = {
 - Escalate if implementation requires a new scope or architecture decision.`,
   verify: `Supervisor Lead Verify mode:
 - Audit the completed or claimed work before final synthesis.
-- Require evidence from tests, inspected diffs, tool output, or explicit verification gaps.
+- Require evidence from tests, inspected diffs, snapshot turn/session diffs, tool output, or explicit verification gaps.
+- When a child/specialist claims it changed code, require snapshot-backed audit evidence unless snapshots are unavailable and that gap is stated.
 - Separate confirmed results from residual risk.`,
 } as const;
 
@@ -51,6 +52,17 @@ The supervisor may delegate to these native Mastra Agent instances:
 
 Do not describe these specialists as agents from the sibling coding harness. They are Mastra supervisor-delegated specialist agents.`;
 
+const supervisorSnapshotAuditPrompt = `Snapshot audit discipline:
+- Treat specialist and child-agent implementation summaries as claims until checked against direct evidence.
+- Use snapshotRepoPath, sessionSnapshotPath, turnSnapshotPath, sessionDiffPath, turnDiffPath, latestRef, sessionRef, turnRef, turnNumber, and snapshotReminder when present.
+- Inspect turn diffs to answer what changed in the latest child-agent round.
+- Inspect session diffs to answer what changed across the whole run and whether scope was preserved.
+- Pass snapshot paths and refs through input_args when delegating validation or follow-up work so downstream agents can audit the same evidence.
+- read_snapshots is available on the supervisor for write/edit event logs.
+- Use sessionDiffPath and turnDiffPath from async completion reminders as primary audit inputs for child-agent changes.
+- Include snapshotRepoPath, sessionSnapshotPath, turnSnapshotPath, sessionDiffPath, turnDiffPath, turnRef, and turnNumber in input_args when asking Validator or another specialist to review child-agent work.
+- If a write/edit event is not represented in the snapshot trail, report the audit gap instead of accepting the claim.`;
+
 const supervisorOutputPrompt = `Final synthesis discipline:
 - Status: one-line task state such as completed, partial, blocked, escalated, or failed.
 - Summary: what was done, found, planned, or changed from the user's perspective.
@@ -69,7 +81,7 @@ Keep the user looped in without flooding them.
 
 When useful, structure the final response with status, summary, facts, assumptions, findings, files changed, commands run, verification, risks, and next actions. Keep the user looped in without flooding them.`;
 
-export const supervisorPolicyPrompts = [supervisorAgentsPrompt, supervisorOutputPrompt] as const;
+export const supervisorPolicyPrompts = [supervisorAgentsPrompt, supervisorSnapshotAuditPrompt, supervisorOutputPrompt] as const;
 
 export const supervisorToolPrompts = [
   // Agent-specific Supervisor tool prompts belong here.

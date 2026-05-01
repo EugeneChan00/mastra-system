@@ -137,6 +137,7 @@ interface MastraAsyncAgentJob {
 	completionMessageSent?: boolean;
 	suppressQueuedCompletion?: boolean;
 	workflowObserverActive?: boolean;
+	snapshotOutput?: Partial<MastraAgentAsyncJobSummary>;
 }
 
 export interface MastraAsyncAgentManagerOptions {
@@ -483,6 +484,7 @@ export class MastraAsyncAgentManager {
 		const status = workflowRunStatus(run);
 		if (output.artifactPath) job.artifactPath = output.artifactPath;
 		if (output.eventsPath) job.eventsPath = output.eventsPath;
+		job.snapshotOutput = snapshotFieldsFromWorkflowOutput(output);
 		if (output.harnessMode) job.details.harnessMode = output.harnessMode;
 		if (output.harnessModeId) job.details.harnessModeId = output.harnessModeId;
 		if (output.hardnessMode) job.details.hardnessMode = output.hardnessMode;
@@ -594,6 +596,7 @@ export class MastraAsyncAgentManager {
 			finalMessage: true,
 			lifecycleStatus: "working",
 			usesWorkflow: true,
+			snapshotOutput: snapshotFieldsFromWorkflowOutput(output),
 		};
 		this.jobs.set(jobId, job);
 		this.options.activitySink?.start(jobId, params, details);
@@ -677,6 +680,7 @@ export class MastraAsyncAgentManager {
 			lifecycleStatus: job.lifecycleStatus,
 			artifactPath: job.artifactPath,
 			eventsPath: job.eventsPath,
+			...job.snapshotOutput,
 		};
 	}
 }
@@ -697,7 +701,7 @@ export function createMastraTools(client = new MastraHttpClient(), options: Mast
 		new MastraAsyncAgentManager(client, {
 			activitySink: options.agentActivitySink,
 			onComplete: options.onAsyncAgentComplete,
-			useWorkflowJobs: false,
+			useWorkflowJobs: true,
 		});
 	return [
 		createMastraAgentQueryTool(asyncAgentManager, client, options.agentActivitySink),
@@ -1639,6 +1643,7 @@ function isMastraAgentChunkType(type: string): boolean {
 		"tool-call-input-streaming-start",
 		"tool-call-delta",
 		"tool-call-input-streaming-end",
+		"snapshot-audit-context",
 		"finish",
 		"error",
 	].includes(type);
@@ -1663,9 +1668,26 @@ function applyWorkflowLifecycleChunk(details: MastraAgentCallDetails, chunk: unk
 	}
 }
 
-function workflowJobOutput(value: unknown): { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[]; harnessMode?: string; harnessModeId?: string; hardnessMode?: string } {
+type WorkflowJobOutput = { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[]; harnessMode?: string; harnessModeId?: string; hardnessMode?: string; snapshotRepoPath?: string; sessionSnapshotPath?: string; turnSnapshotPath?: string; sessionDiffPath?: string; turnDiffPath?: string; latestRef?: string; sessionRef?: string; turnRef?: string; turnNumber?: number; snapshotReminder?: string };
+
+function snapshotFieldsFromWorkflowOutput(output: WorkflowJobOutput): Partial<MastraAgentAsyncJobSummary> {
+	return {
+		snapshotRepoPath: output.snapshotRepoPath,
+		sessionSnapshotPath: output.sessionSnapshotPath,
+		turnSnapshotPath: output.turnSnapshotPath,
+		sessionDiffPath: output.sessionDiffPath,
+		turnDiffPath: output.turnDiffPath,
+		latestRef: output.latestRef,
+		sessionRef: output.sessionRef,
+		turnRef: output.turnRef,
+		turnNumber: output.turnNumber,
+		snapshotReminder: output.snapshotReminder,
+	};
+}
+
+function workflowJobOutput(value: unknown): WorkflowJobOutput {
 	const candidates = objectCandidates(value);
-	let output: { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[]; harnessMode?: string; harnessModeId?: string; hardnessMode?: string } = {};
+	let output: WorkflowJobOutput = {};
 	for (const candidate of candidates) {
 		const rawStatus = stringField(candidate, "status");
 		const status = rawStatus === "done" || rawStatus === "error" ? rawStatus : undefined;
@@ -1678,6 +1700,16 @@ function workflowJobOutput(value: unknown): { status?: "done" | "error"; text?: 
 			hardnessMode: output.hardnessMode ?? stringField(candidate, "hardnessMode"),
 			text: output.text ?? stringField(candidate, "text") ?? stringField(candidate, "output") ?? stringField(candidate, "textPreview"),
 			errors: output.errors ?? stringArrayField(candidate, "errors"),
+			snapshotRepoPath: output.snapshotRepoPath ?? stringField(candidate, "snapshotRepoPath"),
+			sessionSnapshotPath: output.sessionSnapshotPath ?? stringField(candidate, "sessionSnapshotPath"),
+			turnSnapshotPath: output.turnSnapshotPath ?? stringField(candidate, "turnSnapshotPath"),
+			sessionDiffPath: output.sessionDiffPath ?? stringField(candidate, "sessionDiffPath"),
+			turnDiffPath: output.turnDiffPath ?? stringField(candidate, "turnDiffPath"),
+			latestRef: output.latestRef ?? stringField(candidate, "latestRef"),
+			sessionRef: output.sessionRef ?? stringField(candidate, "sessionRef"),
+			turnRef: output.turnRef ?? stringField(candidate, "turnRef"),
+			turnNumber: output.turnNumber ?? numberField(candidate, "turnNumber"),
+			snapshotReminder: output.snapshotReminder ?? stringField(candidate, "snapshotReminder"),
 		};
 	}
 	return output;
