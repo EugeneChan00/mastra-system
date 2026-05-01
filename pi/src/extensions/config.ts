@@ -15,8 +15,8 @@ export const DEFAULT_MASTRA_AGENT_WIDGET_OPTIONS: Required<Pick<MastraAgentsWidg
 export const DEFAULT_MASTRA_AGENT_VIEW_MODE: MastraAgentsViewMode = "list";
 export const DEFAULT_MASTRA_AGENT_EXTENSION_SHORTCUTS: MastraAgentExtensionShortcuts = {
 	viewMode: "alt+h",
-	nextAgent: "ctrl+down",
-	previousAgent: "ctrl+up",
+	nextAgent: "alt+o",
+	previousAgent: "alt+i",
 	detailScrollDown: "alt+j",
 	detailScrollUp: "alt+k",
 	detailStreamOnly: "alt+s",

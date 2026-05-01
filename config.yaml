@@ -6,8 +6,8 @@ mastra-agent-extension:
   reservedRows: 10
   defaultViewMode: list
   viewModeShortcut: alt+h
-  nextAgentShortcut: ctrl+down
-  previousAgentShortcut: ctrl+up
+  nextAgentShortcut: alt+o
+  previousAgentShortcut: alt+i
   detailScrollDownShortcut: alt+j
   detailScrollUpShortcut: alt+k
   detailStreamOnlyShortcut: alt+s
