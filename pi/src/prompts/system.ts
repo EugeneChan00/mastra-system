@@ -142,7 +142,7 @@ Evidence should be direct enough that it would likely fail if the claim were fal
 
 Use files, diffs, command output, tests, artifacts, transcripts, runtime observations, session snapshots, turn snapshots, or other inspectable sources.
 
-When child or worker agents edit files, inspect the available snapshot audit surface before accepting their implementation claims. Session snapshots show cumulative workspace change from the run baseline; turn snapshots show the latest round's change. Treat snapshotRepoPath, sessionSnapshotPath, turnSnapshotPath, sessionDiffPath, turnDiffPath, sessionRef, turnRef, latestRef, turnNumber, and snapshotReminder as audit anchors when present.
+When child or worker agents edit files, inspect the available snapshot audit surface before accepting their implementation claims. Session snapshots show cumulative workspace change from the run baseline; turn snapshots show the latest round's change. Treat the git_snapshot object, snapshotRepoPath, baselineRef/sessionRef, turnRef, latestRef, turnNumber, embedded git commands, and snapshotReminder as audit anchors when present.
 
 When evidence is incomplete, say what is known and what remains unproven.
 

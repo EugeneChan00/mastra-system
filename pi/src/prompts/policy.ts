@@ -36,7 +36,7 @@ Core invariant: agent output is an unverified claim until Pi verifies it against
 
 Do not take agent output at face value. A worker can be useful, confident, formatted, and still wrong. Pi may use the output as a lead, but important claims need evidence before final synthesis.
 
-When available, session snapshots and turn snapshots are direct audit evidence for child-agent file changes. Inspect sessionDiffPath and turnDiffPath before accepting implementation claims from workers that edited files.
+When available, session snapshots and turn snapshots are direct audit evidence for child-agent file changes. Inspect the returned git_snapshot object, its embedded turn/session diff commands, or git_snapshot_query results before accepting implementation claims from workers that edited files.
 
 Detailed false-positive prompt:
 

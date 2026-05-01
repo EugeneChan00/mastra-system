@@ -1,3 +1,20 @@
+export const PI_SNAPSHOT_OBSERVABILITY_PROMPT = `Snapshot Observability (git-based):
+
+Use git-based snapshots for turn and session diffs after child agent mutations.
+
+Snapshot repo: ~/.agents/snapshots/mastra-agents/<agent-id>/<session-id>/<run-id>/snapshots.git
+
+Key queries:
+- Turn diff: git --git-dir=<repo> diff refs/turn/main/t{N-1} refs/turn/main/t{N}
+- Session diff: git --git-dir=<repo> diff refs/baseline/startup refs/latest
+- List turns: git --git-dir=<repo> for-each-ref refs/turn/main/
+- Reconstruct file at turn N: git --git-dir=<repo> show refs/turn/main/t{N}:<path>
+- All turns: git --git-dir=<repo> log --oneline refs/turn/main/
+
+Prefer the returned git_snapshot object from async worker completion. Pass git_snapshot, snapshotRepoPath, turnRef, and baselineRef via input_args when delegating.
+
+Reference implementation: ~/just-claude/hooks/snapshot/ (just-claude/snapshots repo)`;
+
 export const PI_AGENT_AS_TOOL_PROMPT = `Agents as tools:
 
 Worker agents are tools for bounded background work. Use them when they can reduce uncertainty, inspect a well-defined surface, implement inside an approved boundary, or validate evidence without blocking the immediate next step.
@@ -13,9 +30,9 @@ A strong delegation brief includes:
 - Stop condition: when to return instead of expanding the task.
 - Return shape: changed files, commands run, outputs observed, assumptions, blockers, risks, and recommended next step.
 
-Use structured input_args when the tool supports them. Put paths, issue IDs, artifact paths, snapshotPath, snapshotEventId, turn/session diff logs, transcript paths, workflow IDs, run IDs, and similar anchors into structured arguments instead of relying only on prose.
+Use structured input_args when the tool supports them. Put paths, issue IDs, artifact paths, git_snapshot objects, snapshotRepoPath, turnRef, turn/session diff logs, transcript paths, workflow IDs, run IDs, and similar anchors into structured arguments instead of relying only on prose.
 
-When worker tools expose snapshotPath, snapshotEventId, turnDiff, or sessionDiff, inspect those snapshots between delegation rounds and after edit/write events before treating the worker's change summary as proven. Inspect turnDiff and sessionDiff from write/edit results before accepting implementation claims from workers.
+When worker completions expose a git_snapshot object, inspect turn and session diffs through git_snapshot_query or the embedded git commands before treating the worker's change summary as proven.
 
 For async worker jobs, read the completed worker output before final synthesis unless the user explicitly opts out. A start receipt, queued status, or completion notification is not the result.
 

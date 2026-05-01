@@ -54,13 +54,13 @@ Do not describe these specialists as agents from the sibling coding harness. The
 
 const supervisorSnapshotAuditPrompt = `Snapshot audit discipline:
 - Treat specialist and child-agent implementation summaries as claims until checked against direct evidence.
-- Use snapshotRepoPath, sessionSnapshotPath, turnSnapshotPath, sessionDiffPath, turnDiffPath, latestRef, sessionRef, turnRef, turnNumber, and snapshotReminder when present.
+- Use the git_snapshot object, snapshotRepoPath, baselineRef/sessionRef, latestRef, turnRef, turnNumber, embedded git commands, and snapshotReminder when present.
 - Inspect turn diffs to answer what changed in the latest child-agent round.
 - Inspect session diffs to answer what changed across the whole run and whether scope was preserved.
-- Pass snapshot paths and refs through input_args when delegating validation or follow-up work so downstream agents can audit the same evidence.
-- read_snapshots is available on the supervisor for write/edit event logs.
-- Use sessionDiffPath and turnDiffPath from async completion reminders as primary audit inputs for child-agent changes.
-- Include snapshotRepoPath, sessionSnapshotPath, turnSnapshotPath, sessionDiffPath, turnDiffPath, turnRef, and turnNumber in input_args when asking Validator or another specialist to review child-agent work.
+- Pass git_snapshot, snapshotRepoPath, refs, and commands through input_args when delegating validation or follow-up work so downstream agents can audit the same evidence.
+- git_snapshot_query is available on the supervisor for turn/session diff reads.
+- Use the turnDiff/sessionDiff commands from async completion reminders as primary audit inputs for child-agent changes.
+- Include git_snapshot, snapshotRepoPath, turnRef, baselineRef/sessionRef, and turnNumber in input_args when asking Validator or another specialist to review child-agent work.
 - If a write/edit event is not represented in the snapshot trail, report the audit gap instead of accepting the claim.`;
 
 const supervisorOutputPrompt = `Final synthesis discipline:

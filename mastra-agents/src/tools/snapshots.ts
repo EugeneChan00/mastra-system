@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { resolveWorkspaceInputPath, toWorkspacePath, workspaceRoot } from "../workspace-paths.js";
+import { workspaceRoot } from "../workspace-paths.js";
+import { git } from "./git-ops.js";
 
 export type SnapshotOwner = {
   agentId: string;
@@ -11,7 +12,25 @@ export type SnapshotOwner = {
   childId?: string;
 };
 
+export type GitSnapshotAudit = {
+  type: "git_snapshot";
+  agentId: string;
+  sessionId: string;
+  runId: string;
+  snapshotRepoPath: string;
+  baselineRef: "refs/baseline/startup";
+  latestRef: "refs/latest";
+  turnRef: `refs/turn/main/t${number}`;
+  turnNumber: number;
+  commands: {
+    listTurns: string;
+    turnDiff: string;
+    sessionDiff: string;
+  };
+};
+
 export type SnapshotCapture = {
+  snapshot: GitSnapshotAudit;
   snapshotRepoPath: string;
   sessionSnapshotPath: string;
   turnSnapshotPath: string;
@@ -19,105 +38,84 @@ export type SnapshotCapture = {
   turnDiffPath: string;
   latestRef: string;
   sessionRef: string;
-  turnRef: string;
+  baselineRef: "refs/baseline/startup";
+  turnRef: `refs/turn/main/t${number}`;
   turnNumber: number;
   sessionDiff: string;
   turnDiff: string;
   reminder: string;
 };
 
-type FileSnapshot = Record<string, string>;
-
-const snapshotIgnoreDirs = new Set([".git", "node_modules", ".mastra", "dist", "build"]);
+const baselineRef = "refs/baseline/startup" as const;
+const latestRef = "refs/latest" as const;
+const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const snapshotAgentType = "mastra-agents";
+const snapshotIgnoreDirs = new Set([".git", "node_modules", ".mastra", "dist", "build", "coverage"]);
 
 export function snapshotRepoPath(owner: SnapshotOwner): string {
   return path.join(
-    workspaceRoot,
-    ".agents",
-    "exec",
-    "snapshots",
-    "mastra-agents",
+    snapshotRootDir(),
     safePathPart(owner.agentId),
     safePathPart(owner.sessionId ?? "local-session"),
     safePathPart(owner.runId ?? owner.childId ?? "local-run"),
+    "snapshots.git",
   );
 }
 
-export async function initializeSessionSnapshot(owner: SnapshotOwner): Promise<{ snapshotRepoPath: string; sessionSnapshotPath: string; latestRef: string; sessionRef: string }> {
-  const repoPath = snapshotRepoPath(owner);
-  await fs.mkdir(repoPath, { recursive: true });
-  const metadataPath = path.join(repoPath, "metadata.json");
-  const baselinePath = path.join(repoPath, "session-baseline.json");
-  const existingBaseline = await readSnapshotFile(baselinePath);
-  if (!existingBaseline) {
-    const baseline = await createWorkspaceSnapshot();
-    await writeJsonFile(baselinePath, baseline);
-    await writeJsonFile(path.join(repoPath, "latest.json"), baseline);
-    await writeJsonFile(metadataPath, {
-      agentId: owner.agentId,
-      sessionId: owner.sessionId,
-      runId: owner.runId,
-      childId: owner.childId,
-      turnNumber: 0,
-      latestSnapshot: baseline,
-      updatedAt: new Date().toISOString(),
-    });
+export async function initializeSessionSnapshot(owner: SnapshotOwner): Promise<{
+  snapshot: GitSnapshotAudit;
+  snapshotRepoPath: string;
+  sessionSnapshotPath: string;
+  latestRef: string;
+  sessionRef: string;
+  baselineRef: "refs/baseline/startup";
+}> {
+  const repoPath = await ensureRepo(owner);
+  if (!(await refExists(repoPath, baselineRef))) {
+    const { commit } = await buildWorkspaceCommit(repoPath, snapshotMessage(owner, "baseline:startup"), null);
+    await git([`--git-dir=${repoPath}`, "update-ref", baselineRef, commit]);
   }
+
+  const snapshot = gitSnapshotAudit(owner, repoPath, 0);
   return {
-    snapshotRepoPath: toWorkspacePath(repoPath),
-    sessionSnapshotPath: toWorkspacePath(baselinePath),
-    latestRef: "refs/latest",
-    sessionRef: "refs/session/baseline",
+    snapshot,
+    snapshotRepoPath: repoPath,
+    sessionSnapshotPath: `${repoPath}#${baselineRef}`,
+    latestRef,
+    sessionRef: baselineRef,
+    baselineRef,
   };
 }
 
 export async function captureTurnSnapshot(owner: SnapshotOwner): Promise<SnapshotCapture> {
-  const repoPath = snapshotRepoPath(owner);
-  await fs.mkdir(repoPath, { recursive: true });
-  const metadataPath = path.join(repoPath, "metadata.json");
-  const metadata = await readMetadata(metadataPath);
-  const turnNumber = metadata.turnNumber + 1;
-  const currentSnapshot = await createWorkspaceSnapshot();
-
-  const baselinePath = path.join(repoPath, "session-baseline.json");
-  let baseline = await readSnapshotFile(baselinePath);
-  if (!baseline) {
-    baseline = metadata.latestSnapshot ?? currentSnapshot;
-    await writeJsonFile(baselinePath, baseline);
+  const repoPath = await ensureRepo(owner);
+  if (!(await refExists(repoPath, baselineRef))) {
+    await initializeSessionSnapshot(owner);
   }
 
-  const previous = metadata.latestSnapshot ?? baseline;
-  const sessionDiff = diffSnapshots(baseline, currentSnapshot);
-  const turnDiff = diffSnapshots(previous, currentSnapshot);
-  const turnSnapshotPath = path.join(repoPath, "turns", `turn-${turnNumber}.json`);
-  const latestSnapshotPath = path.join(repoPath, "latest.json");
-  const sessionDiffPath = path.join(repoPath, "session.diff");
-  const turnDiffPath = path.join(repoPath, "turns", `turn-${turnNumber}.diff`);
+  const turnNumber = (await currentTurnNumber(repoPath)) + 1;
+  const turnRef = `refs/turn/main/t${turnNumber}` as const;
+  const parentRef = turnNumber > 1 ? `refs/turn/main/t${turnNumber - 1}` : baselineRef;
+  const parent = (await resolveRef(repoPath, parentRef)) ?? null;
+  const { commit } = await buildWorkspaceCommit(repoPath, snapshotMessage(owner, `turn:t${turnNumber}`), parent);
 
-  await fs.mkdir(path.dirname(turnSnapshotPath), { recursive: true });
-  await writeJsonFile(turnSnapshotPath, currentSnapshot);
-  await writeJsonFile(latestSnapshotPath, currentSnapshot);
-  await fs.writeFile(sessionDiffPath, sessionDiff, "utf8");
-  await fs.writeFile(turnDiffPath, turnDiff, "utf8");
-  await writeJsonFile(metadataPath, {
-    agentId: owner.agentId,
-    sessionId: owner.sessionId,
-    runId: owner.runId,
-    childId: owner.childId,
-    turnNumber,
-    latestSnapshot: currentSnapshot,
-    updatedAt: new Date().toISOString(),
-  });
+  await git([`--git-dir=${repoPath}`, "update-ref", turnRef, commit]);
+  await git([`--git-dir=${repoPath}`, "update-ref", latestRef, commit]);
 
+  const turnDiff = await rawTurnDiff(repoPath, turnRef);
+  const sessionDiff = await rawSessionDiff(repoPath);
+  const snapshot = gitSnapshotAudit(owner, repoPath, turnNumber);
   const capture = {
-    snapshotRepoPath: toWorkspacePath(repoPath),
-    sessionSnapshotPath: toWorkspacePath(baselinePath),
-    turnSnapshotPath: toWorkspacePath(turnSnapshotPath),
-    sessionDiffPath: toWorkspacePath(sessionDiffPath),
-    turnDiffPath: toWorkspacePath(turnDiffPath),
-    latestRef: "refs/latest",
-    sessionRef: "refs/session/baseline",
-    turnRef: `refs/turn/${safePathPart(owner.agentId)}/t${turnNumber}`,
+    snapshot,
+    snapshotRepoPath: repoPath,
+    sessionSnapshotPath: `${repoPath}#${baselineRef}`,
+    turnSnapshotPath: `${repoPath}#${turnRef}`,
+    sessionDiffPath: snapshot.commands.sessionDiff,
+    turnDiffPath: snapshot.commands.turnDiff,
+    latestRef,
+    sessionRef: baselineRef,
+    baselineRef,
+    turnRef,
     turnNumber,
     sessionDiff,
     turnDiff,
@@ -127,162 +125,222 @@ export async function captureTurnSnapshot(owner: SnapshotOwner): Promise<Snapsho
   return { ...capture, reminder: formatSnapshotReminder(owner, capture) };
 }
 
-export async function recordMutationSnapshot(params: {
-  owner?: SnapshotOwner;
-  tool: "write_file" | "edit_file";
-  filePath: string;
-  workspacePath: string;
-  operation: "create" | "overwrite" | "replace";
-  beforeContent: string;
-  afterContent: string;
-}) {
-  const owner = params.owner ?? { agentId: "workspace-tool", sessionId: "local-session", runId: "workspace-mutations" };
-  const repoPath = snapshotRepoPath(owner);
-  const logPath = path.join(repoPath, "write-events.jsonl");
-  const turnDiff = createFileDiff(params.workspacePath, params.beforeContent, params.afterContent);
-  const event = {
-    eventId: randomUUID(),
-    timestamp: new Date().toISOString(),
-    tool: params.tool,
-    path: params.workspacePath,
-    operation: params.operation,
-    turnDiff,
-    sessionDiff: turnDiff,
-  };
-
-  await fs.mkdir(path.dirname(logPath), { recursive: true });
-  await fs.appendFile(logPath, `${JSON.stringify(event)}\n`, "utf8");
-
-  return {
-    snapshotPath: toWorkspacePath(logPath),
-    snapshotEventId: event.eventId,
-    turnDiff,
-    sessionDiff: turnDiff,
-  };
+export async function rawTurnDiff(repoPath: string, turnRef: string): Promise<string> {
+  const parent = (await resolveRef(repoPath, `${turnRef}^`)) ?? emptyTree;
+  return git([`--git-dir=${repoPath}`, "diff", "--no-color", parent, turnRef]).catch(() => "");
 }
 
-export async function readMutationSnapshots(query: { maxEvents?: number; filePath?: string; owner?: SnapshotOwner }) {
-  const owner = query.owner ?? { agentId: "workspace-tool", sessionId: "local-session", runId: "workspace-mutations" };
-  const logPath = path.join(snapshotRepoPath(owner), "write-events.jsonl");
-  let raw = "";
-  try {
-    raw = await fs.readFile(logPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-
-  const fileFilter = query.filePath === undefined ? undefined : toWorkspacePath(resolveWorkspaceInputPath(query.filePath));
-  const maxEvents = query.maxEvents ?? 20;
-  const events = raw
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line))
-    .filter((event) => fileFilter === undefined || event.path === fileFilter)
-    .slice(-maxEvents);
-
-  return { snapshotPath: toWorkspacePath(logPath), events };
+export async function rawSessionDiff(repoPath: string): Promise<string> {
+  const latest = await resolveRef(repoPath, latestRef);
+  if (!latest) return "";
+  const baseline = await resolveRef(repoPath, baselineRef);
+  const left = baseline ?? emptyTree;
+  return git([`--git-dir=${repoPath}`, "diff", "--no-color", left, latestRef]).catch(() => "");
 }
 
 export function formatSnapshotReminder(owner: SnapshotOwner, capture: Omit<SnapshotCapture, "reminder">): string {
   return [
     "Snapshot audit context:",
+    `- snapshot type: ${capture.snapshot.type}`,
     `- agent id: ${owner.agentId}`,
-    owner.sessionId ? `- session/run id: ${owner.sessionId}` : undefined,
-    owner.runId ? `- child/delegation id: ${owner.runId}` : undefined,
+    `- session id: ${capture.snapshot.sessionId}`,
+    `- run id: ${capture.snapshot.runId}`,
     `- turn number: ${capture.turnNumber}`,
     `- snapshot repo: ${capture.snapshotRepoPath}`,
-    `- session snapshot: ${capture.sessionSnapshotPath}`,
-    `- latest session ref: ${capture.latestRef}`,
-    `- current turn snapshot: ${capture.turnSnapshotPath}`,
+    `- baseline ref: ${capture.baselineRef}`,
+    `- latest ref: ${capture.latestRef}`,
     `- current turn ref: ${capture.turnRef}`,
-    `- turn diff: ${capture.turnDiffPath}`,
-    `- session diff: ${capture.sessionDiffPath}`,
-    "Use these snapshots to inspect actual file changes before relying on agent claims.",
-  ].filter(Boolean).join("\n");
+    `- list turns: ${capture.snapshot.commands.listTurns}`,
+    `- turn diff: ${capture.snapshot.commands.turnDiff}`,
+    `- session diff: ${capture.snapshot.commands.sessionDiff}`,
+    "Use this git snapshot object to inspect actual file changes before relying on agent claims.",
+  ].join("\n");
 }
 
-async function readMetadata(metadataPath: string): Promise<{ turnNumber: number; latestSnapshot?: FileSnapshot }> {
+async function ensureRepo(owner: SnapshotOwner): Promise<string> {
+  const repoPath = snapshotRepoPath(owner);
   try {
-    const parsed = JSON.parse(await fs.readFile(metadataPath, "utf8"));
-    return {
-      turnNumber: typeof parsed.turnNumber === "number" ? parsed.turnNumber : 0,
-      latestSnapshot: isSnapshot(parsed.latestSnapshot) ? parsed.latestSnapshot : undefined,
-    };
+    await fs.access(path.join(repoPath, "HEAD"));
   } catch {
-    return { turnNumber: 0 };
+    await fs.mkdir(path.dirname(repoPath), { recursive: true });
+    await git(["init", "--bare", repoPath]);
+  }
+  return repoPath;
+}
+
+async function buildWorkspaceCommit(
+  repoPath: string,
+  message: string,
+  parent: string | null,
+): Promise<{ commit: string; tree: string }> {
+  const tmpIndex = path.join(
+    os.tmpdir(),
+    `mastra-snapshot-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.idx`,
+  );
+  const env = {
+    GIT_INDEX_FILE: tmpIndex,
+    GIT_WORK_TREE: workspaceRoot,
+  };
+
+  try {
+    await git([`--git-dir=${repoPath}`, "read-tree", "--empty"], { env });
+    const files = await snapshotFileList();
+    for (const chunk of chunkArray(files, 200)) {
+      await git(
+        [
+          `--git-dir=${repoPath}`,
+          `--work-tree=${workspaceRoot}`,
+          "add",
+          "--ignore-errors",
+          "--",
+          ...chunk,
+        ],
+        { env },
+      );
+    }
+    const tree = (await git([`--git-dir=${repoPath}`, "write-tree"], { env })).trim();
+    const parentArgs = parent ? ["-p", parent] : [];
+    const commit = (
+      await git([`--git-dir=${repoPath}`, "commit-tree", tree, ...parentArgs, "-m", message], {
+        env: {
+          ...env,
+          GIT_AUTHOR_NAME: "mastra-snapshot",
+          GIT_AUTHOR_EMAIL: "snapshot@local",
+          GIT_COMMITTER_NAME: "mastra-snapshot",
+          GIT_COMMITTER_EMAIL: "snapshot@local",
+        },
+      })
+    ).trim();
+    return { commit, tree };
+  } finally {
+    await fs.rm(tmpIndex, { force: true }).catch(() => undefined);
   }
 }
 
-async function readSnapshotFile(snapshotPath: string): Promise<FileSnapshot | undefined> {
+async function snapshotFileList(): Promise<string[]> {
   try {
-    const parsed = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
-    return isSnapshot(parsed) ? parsed : undefined;
+    const raw = await git(["ls-files", "--cached", "--modified", "--others", "--exclude-standard", "-z"], { cwd: workspaceRoot });
+    const files = raw.split("\0").filter((entry) => entry.length > 0);
+    return (await filterExistingSnapshotFiles(files)).sort();
+  } catch {
+    const files: string[] = [];
+    await collectSnapshotFiles(workspaceRoot, "", files);
+    return files.sort();
+  }
+}
+
+async function filterExistingSnapshotFiles(files: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const file of files) {
+    if (isIgnoredSnapshotPath(file)) continue;
+    try {
+      const stat = await fs.stat(path.join(workspaceRoot, file));
+      if (stat.isFile()) out.push(file);
+    } catch {
+      // A missing file is represented by absence from the new tree.
+    }
+  }
+  return out;
+}
+
+async function collectSnapshotFiles(directory: string, relativeDirectory: string, out: string[]): Promise<void> {
+  const dirents = await fs.readdir(directory, { withFileTypes: true });
+  for (const dirent of dirents) {
+    const relativePath = relativeDirectory ? path.join(relativeDirectory, dirent.name) : dirent.name;
+    if (isIgnoredSnapshotPath(relativePath)) continue;
+    const absolutePath = path.join(directory, dirent.name);
+    if (dirent.isDirectory()) {
+      await collectSnapshotFiles(absolutePath, relativePath, out);
+    } else if (dirent.isFile()) {
+      out.push(relativePath);
+    }
+  }
+}
+
+function isIgnoredSnapshotPath(relativePath: string): boolean {
+  const parts = relativePath.split(path.sep);
+  if (parts.length >= 3 && parts[0] === ".agents" && parts[1] === "exec" && parts[2] === "snapshots") {
+    return true;
+  }
+  if (parts.some((part) => snapshotIgnoreDirs.has(part))) return true;
+  if (parts.some((part) => part.startsWith(".") && part !== ".agents")) return true;
+  const basename = parts[parts.length - 1] ?? "";
+  return basename.startsWith(".env") || basename === ".gitignore" || basename.startsWith("~");
+}
+
+function chunkArray<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function currentTurnNumber(repoPath: string): Promise<number> {
+  let out = "";
+  try {
+    out = await git([`--git-dir=${repoPath}`, "for-each-ref", "--format=%(refname:lstrip=3)", "refs/turn/main/"]);
+  } catch {
+    return 0;
+  }
+
+  let max = 0;
+  for (const line of out.split("\n")) {
+    const match = line.trim().match(/^t(\d+)$/);
+    if (match) max = Math.max(max, Number.parseInt(match[1]!, 10));
+  }
+  return max;
+}
+
+async function refExists(repoPath: string, ref: string): Promise<boolean> {
+  return (await resolveRef(repoPath, ref)) !== undefined;
+}
+
+async function resolveRef(repoPath: string, ref: string): Promise<string | undefined> {
+  try {
+    return (await git([`--git-dir=${repoPath}`, "rev-parse", "--verify", ref])).trim();
   } catch {
     return undefined;
   }
 }
 
-async function createWorkspaceSnapshot(): Promise<FileSnapshot> {
-  const snapshot: FileSnapshot = {};
-  await collectFiles(workspaceRoot, snapshot);
-  return snapshot;
+function gitSnapshotAudit(owner: SnapshotOwner, repoPath: string, turnNumber: number): GitSnapshotAudit {
+  const turnRef = `refs/turn/main/t${Math.max(1, turnNumber)}` as const;
+  return {
+    type: "git_snapshot",
+    agentId: owner.agentId,
+    sessionId: owner.sessionId ?? "local-session",
+    runId: owner.runId ?? owner.childId ?? "local-run",
+    snapshotRepoPath: repoPath,
+    baselineRef,
+    latestRef,
+    turnRef,
+    turnNumber,
+    commands: {
+      listTurns: `${gitDirCommand(repoPath)} for-each-ref refs/turn/main/`,
+      turnDiff: `${gitDirCommand(repoPath)} diff ${turnNumber > 1 ? `refs/turn/main/t${turnNumber - 1}` : baselineRef} ${turnRef}`,
+      sessionDiff: `${gitDirCommand(repoPath)} diff ${baselineRef} ${latestRef}`,
+    },
+  };
 }
 
-async function collectFiles(directory: string, snapshot: FileSnapshot): Promise<void> {
-  const dirents = await fs.readdir(directory, { withFileTypes: true });
-  for (const dirent of dirents.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (dirent.isDirectory() && snapshotIgnoreDirs.has(dirent.name)) continue;
-    const absolutePath = path.join(directory, dirent.name);
-    const workspacePath = toWorkspacePath(absolutePath);
-    if (workspacePath.startsWith(".agents/exec/snapshots/")) continue;
-    if (dirent.isDirectory()) {
-      await collectFiles(absolutePath, snapshot);
-      continue;
-    }
-    if (!dirent.isFile()) continue;
-    try {
-      const content = await fs.readFile(absolutePath, "utf8");
-      if (content.includes("\u0000")) continue;
-      snapshot[workspacePath] = content;
-    } catch {
-      // Skip unreadable or non-UTF8 files; snapshots are an audit aid, not a runtime dependency.
-    }
-  }
+function snapshotMessage(owner: SnapshotOwner, label: string): string {
+  return `snapshot:${owner.sessionId ?? "local-session"}:${safePathPart(owner.agentId)}:${safePathPart(owner.runId ?? owner.childId ?? "local-run")}:${label}`;
 }
 
-function diffSnapshots(before: FileSnapshot, after: FileSnapshot): string {
-  const files = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort();
-  const sections = files
-    .filter((filePath) => before[filePath] !== after[filePath])
-    .map((filePath) => createFileDiff(filePath, before[filePath] ?? "", after[filePath] ?? ""));
-  return sections.length > 0 ? sections.join("\n") : "(no snapshot diff)";
+function snapshotRootDir(): string {
+  const root = process.env.AGENT_SNAPSHOTS_DIR || path.join(os.homedir(), ".agents");
+  return path.join(root, "snapshots", snapshotAgentType);
 }
 
-function createFileDiff(filePath: string, beforeContent: string, afterContent: string): string {
-  if (beforeContent === afterContent) return `(no turn diff for ${filePath})`;
-  const beforeLines = splitDiffLines(beforeContent);
-  const afterLines = splitDiffLines(afterContent);
-  const lines = [`--- a/${filePath}`, `+++ b/${filePath}`, "@@"];
-  for (const line of beforeLines) lines.push(`-${line}`);
-  for (const line of afterLines) lines.push(`+${line}`);
-  return lines.join("\n");
+function gitDirCommand(repoPath: string): string {
+  return `git --git-dir=${shellQuote(repoPath)}`;
 }
 
-function splitDiffLines(content: string): string[] {
-  if (content === "") return [];
-  const lines = content.split("\n");
-  if (lines[lines.length - 1] === "") lines.pop();
-  return lines;
-}
-
-function isSnapshot(value: unknown): value is FileSnapshot {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.values(value).every((entry) => typeof entry === "string");
-}
-
-function writeJsonFile(filePath: string, value: unknown): Promise<void> {
-  return fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function safePathPart(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+  return value.trim().replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "unknown";
 }

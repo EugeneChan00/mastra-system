@@ -46,6 +46,8 @@ export const supervisorAgent = withAgentModes(new Agent({
     write_file: workspaceTools.writeFile,
     edit_file: workspaceTools.replaceInFile,
     read_snapshots: workspaceTools.readSnapshots,
+    git_snapshot_query: workspaceTools.gitSnapshotQuery,
+    capture_snapshot: workspaceTools.captureSnapshot,
   },
 }), agentModesFromPrompts(supervisorModePrompts));
 

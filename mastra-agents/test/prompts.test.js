@@ -180,7 +180,7 @@ test("agent prompt modules expose instructions and grouped user prompt fragments
 		assert.equal(module[contract.toolExport].length, 0, `${contract.toolExport} should be a placeholder`);
 	}
 	assert.match(promptModules.supervisor.supervisorPolicyPrompts.join("\n\n"), /Snapshot audit discipline/);
-	assert.match(promptModules.supervisor.supervisorPolicyPrompts.join("\n\n"), /turnDiffPath/);
+	assert.match(promptModules.supervisor.supervisorPolicyPrompts.join("\n\n"), /git_snapshot/);
 });
 
 test("agent registrations bake runtime policy and tooling into instructions for now", async () => {

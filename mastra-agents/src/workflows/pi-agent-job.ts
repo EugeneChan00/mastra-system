@@ -22,6 +22,7 @@ import {
 } from "../agents/harness.js";
 import { captureTurnSnapshot, initializeSessionSnapshot, type SnapshotCapture } from "../tools/snapshots.js";
 import { resolveWorkspacePath } from "../workspace.js";
+import { setSessionId } from "../session.js";
 
 const inputArgsSchema = z.record(z.string()).optional();
 const modePromptTrackerStore = new PostgresStore({
@@ -80,6 +81,22 @@ const piAgentJobOutputSchema = z.object({
   turnRef: z.string().optional(),
   turnNumber: z.number().int().optional(),
   snapshotReminder: z.string().optional(),
+  snapshot: z.object({
+    type: z.literal("git_snapshot"),
+    agentId: z.string(),
+    sessionId: z.string(),
+    runId: z.string(),
+    snapshotRepoPath: z.string(),
+    baselineRef: z.string(),
+    latestRef: z.string(),
+    turnRef: z.string(),
+    turnNumber: z.number().int(),
+    commands: z.object({
+      listTurns: z.string(),
+      turnDiff: z.string(),
+      sessionDiff: z.string(),
+    }),
+  }).optional(),
 });
 
 export const runPiAgentJobStep = createStep({
@@ -119,6 +136,7 @@ export const runPiAgentJobStep = createStep({
       });
       resolvedHarnessMode = resolvedMode.harnessMode;
       resolvedHarnessModeId = resolvedMode.harnessModeId;
+      setSessionId(`${snapshotOwner.sessionId ?? "local-session"}-${snapshotOwner.runId ?? snapshotOwner.childId ?? "local-run"}`);
       const initialSnapshot = await initializeSessionSnapshot(snapshotOwner);
       const requestContext = {
         ...(inputData.requestContext ?? {}),
@@ -128,9 +146,11 @@ export const runPiAgentJobStep = createStep({
         [REQUEST_CONTEXT_HARDNESS_MODE_KEY]: resolvedMode.harnessModeId,
         ...(inputData.input_args && Object.keys(inputData.input_args).length > 0 ? { input_args: inputData.input_args } : {}),
         snapshotRepoPath: initialSnapshot.snapshotRepoPath,
+        snapshot: initialSnapshot.snapshot,
         sessionSnapshotPath: initialSnapshot.sessionSnapshotPath,
         latestRef: initialSnapshot.latestRef,
         sessionRef: initialSnapshot.sessionRef,
+        baselineRef: initialSnapshot.baselineRef,
       };
       text = await streamHarnessMessage({
         harness,
@@ -237,6 +257,7 @@ async function emitSnapshotReminder({
 function snapshotOutput(capture: SnapshotCapture | undefined) {
   if (!capture) return {};
   return {
+    snapshot: capture.snapshot,
     snapshotRepoPath: capture.snapshotRepoPath,
     sessionSnapshotPath: capture.sessionSnapshotPath,
     turnSnapshotPath: capture.turnSnapshotPath,

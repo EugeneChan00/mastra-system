@@ -877,16 +877,19 @@ test("async agent manager refreshes remote terminal workflow before canceling lo
 
 test("async agent manager falls back to direct stream when workflow stream fails before agent chunks", async () => {
 	const directRequests: any[] = [];
-	const manager = new MastraAsyncAgentManager({
-		async *streamWorkflow() {
-			throw new Error("stream route missing");
-		},
-		async *streamAgent(_agentId: string, request: unknown) {
-			directRequests.push(request);
-			yield { type: "text-delta", text: "fallback" };
-			yield { type: "finish" };
-		},
-	} as any);
+	const manager = new MastraAsyncAgentManager(
+		{
+			async *streamWorkflow() {
+				throw new Error("stream route missing");
+			},
+			async *streamAgent(_agentId: string, request: unknown) {
+				directRequests.push(request);
+				yield { type: "text-delta", text: "fallback" };
+				yield { type: "finish" };
+			},
+		} as any,
+		{ allowDirectFallback: true },
+	);
 	manager.configureSession({ piSessionId: "session-fallback", cwd: "/workspace/project" });
 
 	await manager.start({ agentId: "agent", message: "prompt", jobId: "fallback-job", jobName: "fallback job" });
@@ -922,6 +925,42 @@ test("async agent manager does not fall back to direct stream after workflow age
 	assert.equal(summary?.status, "error");
 	assert.equal(summary?.textPreview, "partial");
 	assert.match(summary?.errors.join("\n") ?? "", /workflow failed after streaming/);
+});
+
+test("async agent manager does NOT fall back to direct stream when workflow stream fails (snapshot observability)", async () => {
+	let directStreamCalled = false;
+	const manager = new MastraAsyncAgentManager({
+		async *streamWorkflow() {
+			throw new Error("stream route missing");
+		},
+		async *streamAgent(_agentId: string, _request: unknown) {
+			// This MUST NOT be called — direct fallback is disabled to preserve snapshot observability
+			directStreamCalled = true;
+			yield { type: "text-delta", text: "should-not-appear" };
+			yield { type: "finish" };
+		},
+	} as any);
+
+	manager.configureSession({ piSessionId: "session-no-fallback", cwd: "/workspace/project" });
+
+	await manager.start({ agentId: "agent", message: "prompt", jobId: "no-fallback-job", jobName: "no fallback" });
+	await waitFor(() => manager.get("no-fallback-job")?.lifecycleStatus === "agent_response_queued");
+
+	const summary = manager.get("no-fallback-job");
+
+	// Primary invariant: streamAgent was NOT called
+	assert.equal(directStreamCalled, false, "streamAgent should not be called when fallback is disabled");
+
+	// Summary status should be error (workflow failed)
+	assert.equal(summary?.status, "error", "summary status should be error when workflow stream fails without fallback");
+
+	// Lifecycle status is still queued (completion was delivered)
+	assert.equal(summary?.lifecycleStatus, "agent_response_queued", "lifecycleStatus should be agent_response_queued");
+
+	// Error text must make the invariant clear: direct fallback was blocked to preserve snapshot observability
+	const errorText = summary?.errors.join("\n") ?? "";
+	assert.match(errorText, /snapshot observability/i, "error should mention snapshot observability invariant");
+	assert.match(errorText, /Direct fallback/i, "error should indicate direct fallback was disabled");
 });
 
 test("restoring terminal workflow jobs queues each completion reminder once", async () => {
