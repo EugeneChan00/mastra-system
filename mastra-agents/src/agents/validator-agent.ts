@@ -17,7 +17,8 @@ export const validatorAgent = withAgentModes(new Agent({
   description: validatorAgentDescription,
   instructions: composeAgentInstructions(
     validatorInstructionsPrompt,
-    sharedPolicyPrompts.specialist,
+    undefined,
+    sharedPolicyPrompts.validator,
     sharedToolPrompts.specialist,
     validatorPolicyPrompts,
     validatorToolPrompts,
