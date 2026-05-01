@@ -22,7 +22,7 @@ export default function mastraPiExtension(pi: ExtensionAPI) {
 	const harnessModePromptMonitor = createHarnessModePromptMonitor();
 	const asyncAgentManager = new MastraAsyncAgentManager(client, {
 		activitySink: activityStore,
-		useWorkflowJobs: false,
+		useWorkflowJobs: true,
 		onComplete: (summary) => {
 			// Live deltas stay in MastraAgentsWidget; only the final summary becomes a
 			// transcript reminder. "steer" queues it as a system reminder as soon as
@@ -544,8 +544,20 @@ export function formatAsyncAgentCompletion(summary: MastraAgentAsyncJobSummary):
 		summary.threadId ? `threadId: ${summary.threadId}` : undefined,
 		summary.runId ? `runId: ${summary.runId}` : undefined,
 		summary.artifactPath ? `artifactPath: ${summary.artifactPath}` : undefined,
+		summary.snapshot ? `snapshot.type: ${summary.snapshot.type}` : undefined,
+		summary.snapshotRepoPath ? `snapshotRepoPath: ${summary.snapshotRepoPath}` : undefined,
+		summary.snapshot?.commands.listTurns ? `snapshot.commands.listTurns: ${summary.snapshot.commands.listTurns}` : undefined,
+		summary.snapshot?.commands.turnDiff ? `snapshot.commands.turnDiff: ${summary.snapshot.commands.turnDiff}` : undefined,
+		summary.snapshot?.commands.sessionDiff ? `snapshot.commands.sessionDiff: ${summary.snapshot.commands.sessionDiff}` : undefined,
+		summary.sessionSnapshotPath ? `sessionSnapshotPath: ${summary.sessionSnapshotPath}` : undefined,
+		summary.turnSnapshotPath ? `turnSnapshotPath: ${summary.turnSnapshotPath}` : undefined,
+		summary.sessionDiffPath ? `sessionDiffPath: ${summary.sessionDiffPath}` : undefined,
+		summary.turnDiffPath ? `turnDiffPath: ${summary.turnDiffPath}` : undefined,
+		summary.turnRef ? `turnRef: ${summary.turnRef}` : undefined,
+		summary.turnNumber !== undefined ? `turnNumber: ${summary.turnNumber}` : undefined,
 		`Use agent_read with jobId=${summary.jobId} before finalizing unless the initial user prompt explicitly said "pass the output" or "don't read the output".`,
-		summary.artifactPath ? "The artifactPath can be passed as an input_args value to another Mastra agent when chaining work." : undefined,
+		summary.turnDiffPath ? "Inspect the turn/session snapshot diffs before relying on child-agent implementation claims." : undefined,
+		summary.artifactPath ? "The artifactPath can be passed as an input_args value to another Mastra agent when chaining work. Snapshot paths can also be passed as input_args values when available." : undefined,
 		summary.errors.length > 0 ? `errors: ${summary.errors.join("; ")}` : undefined,
 		"</system-reminder>",
 	];

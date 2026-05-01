@@ -80,6 +80,23 @@ export interface MastraAgentInspectJob {
 	updatedAt?: number;
 }
 
+export interface MastraGitSnapshotAudit {
+	type: "git_snapshot";
+	agentId: string;
+	sessionId: string;
+	runId: string;
+	snapshotRepoPath: string;
+	baselineRef: string;
+	latestRef: string;
+	turnRef: string;
+	turnNumber: number;
+	commands: {
+		listTurns: string;
+		turnDiff: string;
+		sessionDiff: string;
+	};
+}
+
 export interface MastraAgentInspectDetails {
 	agents: MastraAgentInspection[];
 	count: number;
@@ -325,6 +342,17 @@ export interface MastraAgentAsyncJobSummary {
 	incomplete?: boolean;
 	artifactPath?: string;
 	eventsPath?: string;
+	snapshotRepoPath?: string;
+	sessionSnapshotPath?: string;
+	turnSnapshotPath?: string;
+	sessionDiffPath?: string;
+	turnDiffPath?: string;
+	latestRef?: string;
+	sessionRef?: string;
+	turnRef?: string;
+	turnNumber?: number;
+	snapshotReminder?: string;
+	snapshot?: MastraGitSnapshotAudit;
 }
 
 export interface MastraAgentAsyncJobDetails extends MastraAgentAsyncJobSummary {

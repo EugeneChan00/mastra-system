@@ -45,6 +45,7 @@ import type {
 	MastraAgentStartInput,
 	MastraAgentStatusInput,
 	MastraAgentToolSchema,
+	MastraGitSnapshotAudit,
 	MastraStreamRequest,
 	MastraWorkflowCallDetails,
 	MastraWorkflowCallInput,
@@ -137,12 +138,14 @@ interface MastraAsyncAgentJob {
 	completionMessageSent?: boolean;
 	suppressQueuedCompletion?: boolean;
 	workflowObserverActive?: boolean;
+	snapshotOutput?: Partial<MastraAgentAsyncJobSummary>;
 }
 
 export interface MastraAsyncAgentManagerOptions {
 	activitySink?: MastraAgentActivitySink;
 	onComplete?: (summary: MastraAgentAsyncJobSummary) => void | Promise<void>;
 	useWorkflowJobs?: boolean;
+	allowDirectFallback?: boolean;
 	isCompletionAcknowledged?: (jobId: string) => boolean;
 	cwd?: string;
 	piSessionId?: string;
@@ -220,10 +223,18 @@ export class MastraAsyncAgentManager {
 				this.startWorkflowJob(job);
 				return this.summary(job);
 			} catch (error) {
-				// During local development the Pi package can be newer than the running
-				// Mastra server. Fall back to the direct stream so agent_query remains
-				// usable, but keep the session/thread id convention identical.
-				job.details.errors.push(`Workflow job runner unavailable, falling back to direct stream: ${error instanceof Error ? error.message : String(error)}`);
+				if (this.options.allowDirectFallback) {
+					// During local development the Pi package can be newer than the running
+					// Mastra server. Fall back to the direct stream so agent_query remains
+					// usable, but keep the session/thread id convention identical.
+					job.details.errors.push(`Workflow job runner unavailable, falling back to direct stream: ${error instanceof Error ? error.message : String(error)}`);
+				} else {
+					// Workflow job runner failed and direct fallback is disabled to preserve snapshot observability.
+					job.details.errors.push(`Workflow job runner unavailable: ${error instanceof Error ? error.message : String(error)}. Direct fallback is disabled to preserve snapshot observability.`);
+					markStreamError(job.details, error, false);
+					void this.completeJob(job);
+					return this.summary(job);
+				}
 			}
 		}
 
@@ -430,6 +441,11 @@ export class MastraAsyncAgentManager {
 		if (job.controller.signal.aborted || job.details.status !== "running" || job.details.rawChunkCount > 0 || !this.hasClientMethod("streamAgent")) {
 			return false;
 		}
+		if (!this.options.allowDirectFallback) {
+			// Workflow job runner failed and direct fallback is disabled to preserve snapshot observability.
+			pushUniqueError(job.details, `Workflow job runner unavailable: ${error instanceof Error ? error.message : String(error)}. Direct fallback is disabled to preserve snapshot observability.`);
+			return false;
+		}
 		pushUniqueError(job.details, `Workflow job runner unavailable, falling back to direct stream: ${error instanceof Error ? error.message : String(error)}`);
 		try {
 			const artifactDir = await mkdtemp(join(tmpdir(), `${job.jobId}-`));
@@ -483,6 +499,7 @@ export class MastraAsyncAgentManager {
 		const status = workflowRunStatus(run);
 		if (output.artifactPath) job.artifactPath = output.artifactPath;
 		if (output.eventsPath) job.eventsPath = output.eventsPath;
+		job.snapshotOutput = snapshotFieldsFromWorkflowOutput(output);
 		if (output.harnessMode) job.details.harnessMode = output.harnessMode;
 		if (output.harnessModeId) job.details.harnessModeId = output.harnessModeId;
 		if (output.hardnessMode) job.details.hardnessMode = output.hardnessMode;
@@ -594,6 +611,7 @@ export class MastraAsyncAgentManager {
 			finalMessage: true,
 			lifecycleStatus: "working",
 			usesWorkflow: true,
+			snapshotOutput: snapshotFieldsFromWorkflowOutput(output),
 		};
 		this.jobs.set(jobId, job);
 		this.options.activitySink?.start(jobId, params, details);
@@ -677,6 +695,7 @@ export class MastraAsyncAgentManager {
 			lifecycleStatus: job.lifecycleStatus,
 			artifactPath: job.artifactPath,
 			eventsPath: job.eventsPath,
+			...job.snapshotOutput,
 		};
 	}
 }
@@ -697,7 +716,7 @@ export function createMastraTools(client = new MastraHttpClient(), options: Mast
 		new MastraAsyncAgentManager(client, {
 			activitySink: options.agentActivitySink,
 			onComplete: options.onAsyncAgentComplete,
-			useWorkflowJobs: false,
+			useWorkflowJobs: true,
 		});
 	return [
 		createMastraAgentQueryTool(asyncAgentManager, client, options.agentActivitySink),
@@ -1639,6 +1658,7 @@ function isMastraAgentChunkType(type: string): boolean {
 		"tool-call-input-streaming-start",
 		"tool-call-delta",
 		"tool-call-input-streaming-end",
+		"snapshot-audit-context",
 		"finish",
 		"error",
 	].includes(type);
@@ -1663,9 +1683,27 @@ function applyWorkflowLifecycleChunk(details: MastraAgentCallDetails, chunk: unk
 	}
 }
 
-function workflowJobOutput(value: unknown): { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[]; harnessMode?: string; harnessModeId?: string; hardnessMode?: string } {
+type WorkflowJobOutput = { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[]; harnessMode?: string; harnessModeId?: string; hardnessMode?: string; snapshot?: MastraGitSnapshotAudit; snapshotRepoPath?: string; sessionSnapshotPath?: string; turnSnapshotPath?: string; sessionDiffPath?: string; turnDiffPath?: string; latestRef?: string; sessionRef?: string; turnRef?: string; turnNumber?: number; snapshotReminder?: string };
+
+function snapshotFieldsFromWorkflowOutput(output: WorkflowJobOutput): Partial<MastraAgentAsyncJobSummary> {
+	return {
+		snapshot: output.snapshot,
+		snapshotRepoPath: output.snapshotRepoPath,
+		sessionSnapshotPath: output.sessionSnapshotPath,
+		turnSnapshotPath: output.turnSnapshotPath,
+		sessionDiffPath: output.sessionDiffPath,
+		turnDiffPath: output.turnDiffPath,
+		latestRef: output.latestRef,
+		sessionRef: output.sessionRef,
+		turnRef: output.turnRef,
+		turnNumber: output.turnNumber,
+		snapshotReminder: output.snapshotReminder,
+	};
+}
+
+function workflowJobOutput(value: unknown): WorkflowJobOutput {
 	const candidates = objectCandidates(value);
-	let output: { status?: "done" | "error"; text?: string; artifactPath?: string; eventsPath?: string; errors?: string[]; harnessMode?: string; harnessModeId?: string; hardnessMode?: string } = {};
+	let output: WorkflowJobOutput = {};
 	for (const candidate of candidates) {
 		const rawStatus = stringField(candidate, "status");
 		const status = rawStatus === "done" || rawStatus === "error" ? rawStatus : undefined;
@@ -1678,6 +1716,17 @@ function workflowJobOutput(value: unknown): { status?: "done" | "error"; text?: 
 			hardnessMode: output.hardnessMode ?? stringField(candidate, "hardnessMode"),
 			text: output.text ?? stringField(candidate, "text") ?? stringField(candidate, "output") ?? stringField(candidate, "textPreview"),
 			errors: output.errors ?? stringArrayField(candidate, "errors"),
+			snapshot: output.snapshot ?? gitSnapshotField(candidate, "snapshot"),
+			snapshotRepoPath: output.snapshotRepoPath ?? stringField(candidate, "snapshotRepoPath"),
+			sessionSnapshotPath: output.sessionSnapshotPath ?? stringField(candidate, "sessionSnapshotPath"),
+			turnSnapshotPath: output.turnSnapshotPath ?? stringField(candidate, "turnSnapshotPath"),
+			sessionDiffPath: output.sessionDiffPath ?? stringField(candidate, "sessionDiffPath"),
+			turnDiffPath: output.turnDiffPath ?? stringField(candidate, "turnDiffPath"),
+			latestRef: output.latestRef ?? stringField(candidate, "latestRef"),
+			sessionRef: output.sessionRef ?? stringField(candidate, "sessionRef"),
+			turnRef: output.turnRef ?? stringField(candidate, "turnRef"),
+			turnNumber: output.turnNumber ?? numberField(candidate, "turnNumber"),
+			snapshotReminder: output.snapshotReminder ?? stringField(candidate, "snapshotReminder"),
 		};
 	}
 	return output;
@@ -1731,6 +1780,38 @@ function booleanField(record: Record<string, unknown>, key: string): boolean | u
 function recordField(record: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
 	const value = record[key];
 	return isRecord(value) ? value : undefined;
+}
+
+function gitSnapshotField(record: Record<string, unknown>, key: string): MastraGitSnapshotAudit | undefined {
+	const value = recordField(record, key);
+	if (!value || value.type !== "git_snapshot") return undefined;
+	const commands = recordField(value, "commands");
+	const snapshotRepoPath = stringField(value, "snapshotRepoPath");
+	const agentId = stringField(value, "agentId");
+	const sessionId = stringField(value, "sessionId");
+	const runId = stringField(value, "runId");
+	const baselineRef = stringField(value, "baselineRef");
+	const latestRef = stringField(value, "latestRef");
+	const turnRef = stringField(value, "turnRef");
+	const turnNumber = numberField(value, "turnNumber");
+	const listTurns = commands ? stringField(commands, "listTurns") : undefined;
+	const turnDiff = commands ? stringField(commands, "turnDiff") : undefined;
+	const sessionDiff = commands ? stringField(commands, "sessionDiff") : undefined;
+	if (!snapshotRepoPath || !agentId || !sessionId || !runId || !baselineRef || !latestRef || !turnRef || turnNumber === undefined || !listTurns || !turnDiff || !sessionDiff) {
+		return undefined;
+	}
+	return {
+		type: "git_snapshot",
+		agentId,
+		sessionId,
+		runId,
+		snapshotRepoPath,
+		baselineRef,
+		latestRef,
+		turnRef,
+		turnNumber,
+		commands: { listTurns, turnDiff, sessionDiff },
+	};
 }
 
 function recordStringField(record: Record<string, unknown>, key: string): Record<string, string> | undefined {

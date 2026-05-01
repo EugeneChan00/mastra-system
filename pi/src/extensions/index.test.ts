@@ -396,8 +396,22 @@ test("extension queues async agent completion as steer reminder and message_end 
 		}
 		if (requestUrl.includes(`/workflows/${encodeURIComponent(MASTRA_PI_AGENT_JOB_WORKFLOW_ID)}/stream?`)) {
 			workflowStreamCalls += 1;
+			const encoder = new TextEncoder();
 			return new Response(
-				`data: ${JSON.stringify({ type: "pi-agent-stream-chunk", payload: { chunk: { type: "finish" } } })}\n\ndata: [DONE]\n\n`,
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode([
+							`data: ${JSON.stringify({ type: "pi-agent-stream-chunk", payload: { chunk: { type: "text-delta", text: Array.from({ length: 80 }, (_, index) => `- extension result ${index + 1}`).join("\n") } } })}\n\n`,
+						].join("")));
+						releaseAgentFinish = () => {
+							controller.enqueue(encoder.encode([
+								`data: ${JSON.stringify({ type: "pi-agent-stream-chunk", payload: { chunk: { type: "finish" } } })}\n\n`,
+								"data: [DONE]\n\n",
+							].join("")));
+							controller.close();
+						};
+					},
+				}),
 				{ status: 200, headers: { "content-type": "text/event-stream" } },
 			);
 		}
@@ -427,7 +441,16 @@ test("extension queues async agent completion as steer reminder and message_end 
 					workflowName: MASTRA_PI_AGENT_JOB_WORKFLOW_ID,
 					runId: requestUrl.split("/runs/")[1]?.split("?")[0] ?? "run",
 					status: "success",
-					result: { text: "extension result" },
+					result: {
+						text: "extension result",
+						snapshotRepoPath: ".agents/exec/snapshots/mastra-agents/validator-agent/session-extension/run-1",
+						sessionSnapshotPath: ".agents/exec/snapshots/mastra-agents/validator-agent/session-extension/run-1/session-baseline.json",
+						turnSnapshotPath: ".agents/exec/snapshots/mastra-agents/validator-agent/session-extension/run-1/turns/turn-1.json",
+						sessionDiffPath: ".agents/exec/snapshots/mastra-agents/validator-agent/session-extension/run-1/session.diff",
+						turnDiffPath: ".agents/exec/snapshots/mastra-agents/validator-agent/session-extension/run-1/turns/turn-1.diff",
+						turnRef: "refs/turn/validator-agent/t1",
+						turnNumber: 1,
+					},
 				}),
 				{ status: 200, headers: { "content-type": "application/json" } },
 			);
@@ -539,8 +562,11 @@ test("extension queues async agent completion as steer reminder and message_end 
 		assert.match(sent.message.content, /^<system-reminder>\nAsynchronous Mastra agent task completed:/);
 		assert.equal(sent.message.details.lifecycleStatus, "agent_response_queued");
 		assert.equal(sent.message.details.status, "done");
-		assert.equal(agentStreamCalls, 1);
-		assert.equal(workflowStreamCalls, 0, "agent_query should use direct agent stream, not workflow stream");
+		assert.match(sent.message.content, /snapshotRepoPath: \.agents\/exec\/snapshots\/mastra-agents\/validator-agent\/session-extension\/run-1/);
+		assert.match(sent.message.content, /turnDiffPath: \.agents\/exec\/snapshots\/mastra-agents\/validator-agent\/session-extension\/run-1\/turns\/turn-1\.diff/);
+		assert.equal(sent.message.details.turnNumber, 1);
+		assert.equal(agentStreamCalls, 0);
+		assert.equal(workflowStreamCalls, 1, "agent_query should use the durable workflow stream so snapshot metadata can propagate");
 		assert.ok(statusCalls.some((call) => call.key === MASTRA_STATUS_KEY && call.value === "mastra: 1 running"));
 		await waitFor(() => !widgetFactories.has("mastra-agents"));
 		const legacyMounts = widgetCalls.filter((call) => (call.id === "mastra-agents-list" || call.id === "mastra-agents-region") && call.hasFactory);

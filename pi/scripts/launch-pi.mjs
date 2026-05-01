@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(packageDir, "src/extensions/index.ts");
+const builtExtensionPath = resolve(packageDir, "dist/extensions/index.js");
+const sourceExtensionPath = resolve(packageDir, "src/extensions/index.ts");
+const extensionPath = existsSync(builtExtensionPath) ? builtExtensionPath : sourceExtensionPath;
 const env = {
 	...process.env,
 	MASTRA_BASE_URL: process.env.MASTRA_BASE_URL || "http://localhost:4111/api",

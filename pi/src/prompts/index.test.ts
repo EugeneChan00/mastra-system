@@ -99,6 +99,7 @@ test("Pi agent resource loader uses SDK system prompt override", async (t) => {
 test("tooling prompt composes agents-as-tools and roles guidance", () => {
 	assert.match(PI_AGENT_AS_TOOL_PROMPT, /Agents as tools/);
 	assert.match(PI_AGENT_AS_TOOL_PROMPT, /input_args/);
+	assert.match(PI_AGENT_AS_TOOL_PROMPT, /git_snapshot/);
 	assert.match(PI_AGENT_ROLES_PROMPT, /Scout handles local repository/);
 	assert.match(PI_AGENT_ROLES_PROMPT, /Validator handles evidence-based validation/);
 	assert.ok(PI_AGENT_TOOLING_PROMPT.includes(PI_AGENT_AS_TOOL_PROMPT));
@@ -111,6 +112,7 @@ test("policy prompt composes environment, development, and verification policy",
 	assert.match(PI_AGENT_EXECUTION_VERIFICATION_POLICY, /Core invariant: agent output is an unverified claim/);
 	assert.match(PI_AGENT_EXECUTION_VERIFICATION_POLICY, /False-positive patterns/);
 	assert.match(PI_AGENT_EXECUTION_VERIFICATION_POLICY, /Verification decision matrix/);
+	assert.match(PI_AGENT_EXECUTION_VERIFICATION_POLICY, /session snapshots/);
 	assert.ok(PI_AGENT_POLICY_PROMPT.includes(PI_AGENT_ENVIRONMENT_EXECUTION_POLICY));
 	assert.ok(PI_AGENT_POLICY_PROMPT.includes(PI_AGENT_DEVELOPMENT_POLICY));
 	assert.ok(PI_AGENT_POLICY_PROMPT.includes(PI_AGENT_EXECUTION_VERIFICATION_POLICY));
