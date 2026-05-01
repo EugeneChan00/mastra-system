@@ -10,6 +10,11 @@ import {
 import { sharedPolicyPrompts } from "../prompts/policy.js";
 import { sharedToolPrompts } from "../prompts/tools.js";
 import { agentDefaultOptions, agentModesFromPrompts, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
+import { deepWikiMCP } from "../mcp/index.js";
+
+// Initialize DeepWiki tools for advisor agent
+// DeepWiki helps advisor with repo analysis, integration research, architecture reviews
+const deepWikiTools = await deepWikiMCP.listTools();
 
 export const advisorAgent = withAgentModes(new Agent({
   id: "advisor-agent",
@@ -30,4 +35,5 @@ export const advisorAgent = withAgentModes(new Agent({
 // delivered to the model by the harness when harness mode changes. They are NOT injected
 // into composeAgentInstructions here. The harness must pass the active mode prompt as the
 // second argument to composeAgentInstructions for mode context to reach the model.
+  tools: deepWikiTools,
 }), agentModesFromPrompts(advisorModePrompts));
