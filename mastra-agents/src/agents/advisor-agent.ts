@@ -17,8 +17,8 @@ export const advisorAgent = withAgentModes(new Agent({
   description: advisorAgentDescription,
   instructions: composeAgentInstructions(
     advisorInstructionsPrompt,
-    sharedPolicyPrompts.specialist,
-    sharedToolPrompts.specialist,
+    sharedPolicyPrompts.orchestrator,
+    sharedToolPrompts.orchestrator,
     advisorPolicyPrompts,
     advisorToolPrompts,
   ),

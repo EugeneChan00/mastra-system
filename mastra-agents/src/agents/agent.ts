@@ -24,8 +24,8 @@ export const supervisorAgent = withAgentModes(new Agent({
   description: supervisorAgentDescription,
   instructions: composeAgentInstructions(
     supervisorInstructionsPrompt,
-    sharedPolicyPrompts.supervisor,
-    sharedToolPrompts.supervisor,
+    sharedPolicyPrompts.orchestrator,
+    sharedToolPrompts.orchestrator,
     supervisorPolicyPrompts,
     supervisorToolPrompts,
   ),

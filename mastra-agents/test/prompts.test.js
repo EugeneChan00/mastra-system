@@ -64,6 +64,8 @@ const removedSharedFragmentExports = [
 	"blockerProtocolPrompt",
 	"specialistToolRuntimePrompt",
 	"supervisorToolPrompt",
+	"agentsAsToolsPrompt",
+	"promptToolUsagePrompt",
 ];
 
 const agentContracts = [
@@ -74,7 +76,9 @@ const agentContracts = [
 		policyExport: "advisorPolicyPrompts",
 		toolExport: "advisorToolPrompts",
 		agentContextNeedle: "Severity model:",
-		sharedToolNeedle: "Operate inside the tools exposed",
+		sharedPolicyNeedle: "Agent orchestration policy",
+		sharedToolNeedle: "Agents as tools",
+		orchestratorCommon: true,
 	},
 	{
 		name: "architect",
@@ -83,6 +87,7 @@ const agentContracts = [
 		policyExport: "architectPolicyPrompts",
 		toolExport: "architectToolPrompts",
 		agentContextNeedle: "Vertical-slice discipline:",
+		sharedPolicyNeedle: "Agent behavior policy",
 		sharedToolNeedle: "Operate inside the tools exposed",
 	},
 	{
@@ -92,6 +97,7 @@ const agentContracts = [
 		policyExport: "developerPolicyPrompts",
 		toolExport: "developerToolPrompts",
 		agentContextNeedle: "Implementation authority:",
+		sharedPolicyNeedle: "Agent behavior policy",
 		sharedToolNeedle: "Operate inside the tools exposed",
 	},
 	{
@@ -101,6 +107,7 @@ const agentContracts = [
 		policyExport: "researcherPolicyPrompts",
 		toolExport: "researcherToolPrompts",
 		agentContextNeedle: "Source hierarchy:",
+		sharedPolicyNeedle: "Agent behavior policy",
 		sharedToolNeedle: "Operate inside the tools exposed",
 	},
 	{
@@ -110,6 +117,7 @@ const agentContracts = [
 		policyExport: "scoutPolicyPrompts",
 		toolExport: "scoutToolPrompts",
 		agentContextNeedle: "Boundary discipline:",
+		sharedPolicyNeedle: "Agent behavior policy",
 		sharedToolNeedle: "Operate inside the tools exposed",
 	},
 	{
@@ -119,7 +127,9 @@ const agentContracts = [
 		policyExport: "supervisorPolicyPrompts",
 		toolExport: "supervisorToolPrompts",
 		agentContextNeedle: "# Registered specialist agents",
-		sharedToolNeedle: "Delegation protocol:",
+		sharedPolicyNeedle: "Agent orchestration policy",
+		sharedToolNeedle: "Agents as tools",
+		orchestratorCommon: true,
 	},
 	{
 		name: "validator",
@@ -128,6 +138,7 @@ const agentContracts = [
 		policyExport: "validatorPolicyPrompts",
 		toolExport: "validatorToolPrompts",
 		agentContextNeedle: "Validation setup:",
+		sharedPolicyNeedle: "Agent behavior policy",
 		sharedToolNeedle: "Operate inside the tools exposed",
 	},
 ];
@@ -152,8 +163,8 @@ test("prompt index exports grouped surfaces without builder prompts", () => {
 		assert.equal(fragmentName in prompts, false, `${fragmentName} should not be exported individually`);
 	}
 
-	assert.deepEqual(Object.keys(prompts.sharedPolicyPrompts).sort(), ["specialist", "supervisor"]);
-	assert.deepEqual(Object.keys(prompts.sharedToolPrompts).sort(), ["specialist", "supervisor"]);
+	assert.deepEqual(Object.keys(prompts.sharedPolicyPrompts).sort(), ["orchestrator", "specialist"]);
+	assert.deepEqual(Object.keys(prompts.sharedToolPrompts).sort(), ["orchestrator", "specialist"]);
 });
 
 test("agent registrations import agent prompt modules directly", async () => {
@@ -190,9 +201,16 @@ test("agent registrations bake runtime policy and tooling into instructions for 
 
 		assert.ok(String(instructions).startsWith(promptModule[contract.instructionsExport]));
 		assert.match(instructions, /# Runtime Policy And Tooling/);
-		assert.match(instructions, /Work from evidence\./);
+		assert.match(instructions, new RegExp(escapeRegExp(contract.sharedPolicyNeedle)));
 		assert.match(instructions, new RegExp(escapeRegExp(contract.sharedToolNeedle)));
 		assert.match(instructions, new RegExp(escapeRegExp(contract.agentContextNeedle)));
+		if (contract.orchestratorCommon) {
+			assert.match(instructions, /Agent communication policy/);
+			assert.match(instructions, /Prompt-to-tool binding/);
+		} else {
+			assert.doesNotMatch(instructions, /Agent orchestration policy/);
+			assert.doesNotMatch(instructions, /Agents as tools/);
+		}
 		assert.equal(defaultOptions.context, undefined);
 	}
 });
