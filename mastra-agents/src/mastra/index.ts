@@ -50,12 +50,44 @@ const storage = new MastraCompositeStore({
 });
 const editor = new MastraEditor();
 
-const serverPort = Number(process.env.PORT ?? "4111");
+const serverPort = Number(
+  process.env.MASTRA_SERVER_PORT ?? process.env.PORT ?? "4111",
+);
 const studioPort = Number(
-  process.env.MASTRA_SERVER_STUDIO_PORT ?? process.env.PORT ?? "4111",
+  process.env.MASTRA_SERVER_STUDIO_PORT ??
+    process.env.MASTRA_STUDIO_PROXY_PORT ??
+    process.env.MASTRA_STUDIO_PORT ??
+    process.env.PORT ??
+    "4111",
 );
 const studioProtocol =
   process.env.MASTRA_SERVER_STUDIO_PROTOCOL === "https" ? "https" : "http";
+
+function localCorsOriginsForPort(port: string | undefined) {
+  if (!port) return [];
+  return [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
+}
+
+function configuredCorsOrigins() {
+  const configured = (
+    process.env.MASTRA_SERVER_CORS_ORIGINS ??
+    process.env.MASTRA_ALLOWED_ORIGINS ??
+    ""
+  )
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return Array.from(
+    new Set([
+      ...configured,
+      ...localCorsOriginsForPort(process.env.MASTRA_STUDIO_PORT ?? "4111"),
+      ...localCorsOriginsForPort(process.env.MASTRA_STUDIO_PROXY_PORT),
+      ...localCorsOriginsForPort(process.env.MASTRA_STUDIO_INTERNAL_PORT),
+      ...localCorsOriginsForPort("3000"),
+    ]),
+  );
+}
 
 export const mastra = new Mastra({
   agents: mastraAgents,
@@ -126,10 +158,7 @@ export const mastra = new Mastra({
     studioProtocol,
     studioPort,
     cors: {
-      origin: [
-        `http://localhost:${process.env.MASTRA_STUDIO_PORT ?? "4112"}`,
-        `http://127.0.0.1:${process.env.MASTRA_STUDIO_PORT ?? "4112"}`,
-      ],
+      origin: configuredCorsOrigins(),
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: [
         "Content-Type",

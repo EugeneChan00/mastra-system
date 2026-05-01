@@ -11,7 +11,7 @@
     "build": "mastra build",
     "test": "node --test \"test/**/*.test.js\"",
     "start": "mastra start",
-    "studio": "mastra studio"
+    "studio": "node scripts/run-studio.mjs"
   },
   "dependencies": {
     "@daytona/sdk": "0.169.0",
