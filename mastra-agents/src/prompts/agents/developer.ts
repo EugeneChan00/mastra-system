@@ -1,3 +1,4 @@
+// work item 5
 export const developerAgentDescription =
   "Focused implementation support for clearly bounded build tasks delegated by a supervisor.";
 

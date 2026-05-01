@@ -1,3 +1,4 @@
+// work item 4
 export const architectAgentDescription =
   "Read-only boundary, contract, state ownership, and integration design for supervisor delegation.";
 
