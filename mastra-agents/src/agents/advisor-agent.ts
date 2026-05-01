@@ -10,6 +10,11 @@ import {
 import { sharedPolicyPrompts } from "../prompts/policy.js";
 import { sharedToolPrompts } from "../prompts/tools.js";
 import { agentDefaultOptions, agentModesFromPrompts, composeAgentInstructions, createAgentMemory, defaultAgentModel, withAgentModes } from "./shared.js";
+import { deepWikiMCP } from "../mcp/index.js";
+
+// Initialize DeepWiki tools for advisor agent
+// DeepWiki helps advisor with repo analysis, integration research, architecture reviews
+const deepWikiTools = await deepWikiMCP.listTools();
 
 export const advisorAgent = withAgentModes(new Agent({
   id: "advisor-agent",
@@ -25,4 +30,5 @@ export const advisorAgent = withAgentModes(new Agent({
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.advisor,
+  tools: deepWikiTools,
 }), agentModesFromPrompts(advisorModePrompts));
