@@ -24,6 +24,7 @@ export const supervisorAgent = withAgentModes(new Agent({
   description: supervisorAgentDescription,
   instructions: composeAgentInstructions(
     supervisorInstructionsPrompt,
+    supervisorModePrompts.balanced, // Active mode prompt injected into instruction string
     sharedPolicyPrompts.supervisor,
     sharedToolPrompts.supervisor,
     supervisorPolicyPrompts,

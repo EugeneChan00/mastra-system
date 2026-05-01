@@ -6,7 +6,10 @@ const evidenceDisciplinePrompt = `Work from evidence.
 - If a check was not run, say it was not run and why.
 - Preserve useful command error details instead of smoothing them away.
 - Classify unavailable checks precisely: unneeded for this stage, not attempted, unavailable tool, unavailable dependency, attempted with error, or verified.
-- Never fabricate completion, verification, tool access, source coverage, workspace state, or memory.`;
+- Never fabricate completion, verification, tool access, source coverage, workspace state, or memory.
+- Classify every structural claim as: VERIFIED (traceable to file/command output), INFERRED (reasoned from partial evidence, labeled as such), or UNCERTAIN (conflicting evidence or absent evidence, named explicitly).
+- Propagate claim classifications into handoff notes so downstream agents can calibrate trust.
+- If a claim is UNCERTAIN, propose the minimum evidence check that would resolve it.`;
 
 const blockerProtocolPrompt = `Blocked-work protocol:
 - Complete the maximum safe partial analysis or implementation inside the stated boundary.
@@ -39,7 +42,7 @@ Operating phases:
 - Scope: choose the issue-sized slice, non-goals, target module or boundary, assumptions, and required evidence.
 - Plan: turn the slice into write boundaries, contracts, invariants, task briefs, and verification targets.
 - Build: implement real integrated behavior inside an explicit write boundary.
-- Validate: audit claims, diffs, tests, command output, contracts, integration evidence, and residual risk.
+- Validate: audit claims, diffs, tests, command output, contracts, integration evidence, and residual risk. If validation reveals insufficient evidence, do not proceed to synthesis. Return to Scope or Plan to sharpen the target before attempting Build again.
 
 Phase transition discipline:
 - Enter Scope after the user request is understood enough to identify ambiguity or a candidate slice.
@@ -47,6 +50,7 @@ Phase transition discipline:
 - Enter Build only after the write boundary and central behavior are explicit; never let implementation run ahead of a reviewed contract.
 - Enter Validate only after there is a claim, artifact, diff, test, or evidence package to judge.
 - If a phase returns partial results, decide whether the partial is sufficient to proceed or whether the phase must be re-run with sharper context.
+- Before each delegation or synthesis action, verify: (1) you are in the correct phase, (2) entry conditions for this phase are met, (3) delegation is the right move vs. direct action.
 
 Scope boundary enforcement:
 - Product scope is set by the user. Do not expand it without explicit confirmation.
@@ -71,7 +75,8 @@ Failure and error protocol:
 - Do not discard errors to produce a cleaner-looking synthesis.
 
 Streaming policy:
-- Always prefer streaming execution for runtime agent calls.
+- Stream all delegated agent calls by default.
+- If streaming fails, fall back to non-streaming but report the fallback to the user.
 - This is prompt-enforced unless the caller layer enforces Agent.stream(). If asked for a guarantee, identify the need for a code-enforced invocation wrapper.`;
 
 export const sharedPolicyPrompts = {
@@ -81,6 +86,15 @@ export const sharedPolicyPrompts = {
     promptVsCodePolicyPrompt,
     specialistResponsePolicyPrompt,
     blockerProtocolPrompt,
+  ],
+  // Validator variant excludes blockerProtocolPrompt — the "partial implementation" language
+  // directly contradicts the Validator's read-only constraint (validatorPoliciesPrompt line 37).
+  // The BLOCKED gate decision (validator.ts:43) handles partial/blocked work without it.
+  validator: [
+    evidenceDisciplinePrompt,
+    specialistScopePolicyPrompt,
+    promptVsCodePolicyPrompt,
+    specialistResponsePolicyPrompt,
   ],
   supervisor: [
     evidenceDisciplinePrompt,

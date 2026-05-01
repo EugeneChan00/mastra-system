@@ -17,6 +17,7 @@ export const researcherAgent = withAgentModes(new Agent({
   description: researcherAgentDescription,
   instructions: composeAgentInstructions(
     researcherInstructionsPrompt,
+    undefined,
     sharedPolicyPrompts.specialist,
     sharedToolPrompts.specialist,
     researcherPolicyPrompts,

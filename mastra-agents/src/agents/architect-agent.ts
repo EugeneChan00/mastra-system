@@ -17,6 +17,7 @@ export const architectAgent = withAgentModes(new Agent({
   description: architectAgentDescription,
   instructions: composeAgentInstructions(
     architectInstructionsPrompt,
+    undefined,
     sharedPolicyPrompts.specialist,
     sharedToolPrompts.specialist,
     architectPolicyPrompts,

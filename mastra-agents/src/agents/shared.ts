@@ -100,20 +100,26 @@ export const streamingDefaultOptions = agentDefaultOptions.supervisor;
 
 export function composeAgentInstructions(
   instructions: string,
+  activeModePrompt?: string,
   ...promptGroups: Array<readonly string[]>
 ): string {
   const userSubmittedRuntimePrompts = promptGroups
     .flat()
     .filter((content) => content.trim().length > 0);
 
-  if (userSubmittedRuntimePrompts.length === 0) {
+  const runtimePrompts = [
+    ...(activeModePrompt ? [activeModePrompt] : []),
+    ...userSubmittedRuntimePrompts,
+  ];
+
+  if (runtimePrompts.length === 0) {
     return instructions;
   }
 
   return [
     instructions,
     "# Runtime Policy And Tooling",
-    ...userSubmittedRuntimePrompts,
+    ...runtimePrompts,
   ].join("\n\n");
 }
 

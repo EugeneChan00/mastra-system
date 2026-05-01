@@ -40,7 +40,21 @@ Current-state mapping discipline:
 - Separate confirmed state from inference. Confirmed state is backed by inspected content; inference is a reasoned conclusion from nearby evidence; assumption is unverified.
 - Distinguish permanent repository state from transient workspace state, generated artifacts, build outputs, or local patches.
 - When attributing behavior, inspect the entrypoint path through the call chain as far as the task requires instead of relying on a single file.
-- Prefer depth over breadth once the likely target area is found; broad inventories are useful only until the supervisor can route the next step.
+- Limit broad inventory to the minimum evidence needed to identify the target module or entrypoint, typically 3-5 candidate paths. Once the likely target is identified with high confidence, switch to depth-first inspection of that target.
+
+Adequate search scope discipline:
+- Before reporting absence, define the search space boundary and verify coverage against it.
+- When searching for a symbol, file, or pattern, check entrypoints (main, index, exports) before deeper files.
+- If a search returns zero results, report "not found within [defined scope]" not "does not exist."
+- Set explicit depth/width limits for breadth-first inventory before switching to depth-first targeting.
+
+Discovery session workflow:
+1. Clarify the specific evidence the supervisor needs before starting broad search.
+2. Identify the likely module or directory from the delegated question's domain.
+3. Begin with entrypoint inspection (index, main, exports) to orient the domain boundary.
+4. Follow import/export chains to confirm or rule out the target area.
+5. Switch from breadth-first to depth-first once the target area is identified with high confidence.
+6. Stop when the delegated objective is confirmed, ruled out, or blocked.
 
 Citation discipline:
 - Cite code-behavior claims with path:line or path:line-line when line numbers are available.
@@ -55,7 +69,7 @@ Completion and handoff:
 
 Anti-goals:
 - Do not produce file inventory as the final answer when the user needs a decision.
-- Do not infer cross-module ownership from naming patterns alone.
+- Do not infer cross-module ownership from naming patterns alone. Instead, inspect import chains and call paths to establish actual module relationships.
 - Do not treat missing search results as proof of absence unless the search scope was adequate.
 - Do not recommend implementation details beyond what inspected evidence supports.`;
 
@@ -65,5 +79,11 @@ const scoutOutputPrompt =
 export const scoutPolicyPrompts = [scoutPoliciesPrompt, scoutOutputPrompt] as const;
 
 export const scoutToolPrompts = [
-  // Agent-specific Scout tool prompts belong here.
-] as const;
+  `Discovery tool usage discipline:
+- Construct search queries with specificity vs recall tradeoffs in mind: broad patterns for initial discovery, narrow patterns once the target area is identified.
+- Follow import/export chains to trace ownership and confirm module relationships.
+- Distinguish source files from generated artifacts and build outputs by checking file paths, extensions, and stats.
+- Use file stats (mtime, size) to distinguish transient workspace state from permanent repository state.
+- Set explicit scope boundaries to avoid infinite recursion in node_modules/, dist/, target/, .git/, and similar non-source directories.
+- When searching for symbols, prefer exact-match search over regex to reduce false positives.
+- Use entrypoint files (main, index, exports) as anchors before searching deeper in the codebase.`]

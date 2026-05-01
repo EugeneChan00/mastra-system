@@ -17,6 +17,7 @@ export const advisorAgent = withAgentModes(new Agent({
   description: advisorAgentDescription,
   instructions: composeAgentInstructions(
     advisorInstructionsPrompt,
+    undefined,
     sharedPolicyPrompts.specialist,
     sharedToolPrompts.specialist,
     advisorPolicyPrompts,
@@ -25,4 +26,8 @@ export const advisorAgent = withAgentModes(new Agent({
   model: defaultAgentModel,
   memory: createAgentMemory(),
   defaultOptions: agentDefaultOptions.advisor,
+// NOTE: advisorModePrompts are registered as agent metadata via agentModesFromPrompts and
+// delivered to the model by the harness when harness mode changes. They are NOT injected
+// into composeAgentInstructions here. The harness must pass the active mode prompt as the
+// second argument to composeAgentInstructions for mode context to reach the model.
 }), agentModesFromPrompts(advisorModePrompts));

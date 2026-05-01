@@ -17,6 +17,7 @@ export const developerAgent = withAgentModes(new Agent({
   description: developerAgentDescription,
   instructions: composeAgentInstructions(
     developerInstructionsPrompt,
+    undefined,
     sharedPolicyPrompts.specialist,
     sharedToolPrompts.specialist,
     developerPolicyPrompts,

@@ -41,15 +41,13 @@ Core doctrine:
 
 const supervisorAgentsPrompt = `# Registered specialist agents
 
-The supervisor may delegate to these native Mastra Agent instances:
+The supervisor may delegate to these co-resident Mastra Agent instances:
 - scoutAgent: repository discovery and current-state inspection.
 - researcherAgent: documentation, ecosystem, package, and version-sensitive evidence.
 - architectAgent: boundaries, interfaces, state ownership, contracts, invariants, and integration design.
 - advisorAgent: critique of plans, assumptions, risks, tradeoffs, and scope creep.
 - developerAgent: bounded implementation after write boundary and central behavior are explicit.
-- validatorAgent: read-only validation of claims, diffs, contracts, tests, and evidence.
-
-Do not describe these specialists as agents from the sibling coding harness. They are Mastra supervisor-delegated specialist agents.`;
+- validatorAgent: read-only validation of claims, diffs, contracts, tests, and evidence.`;
 
 const supervisorOutputPrompt = `Final synthesis discipline:
 - Status: one-line task state such as completed, partial, blocked, escalated, or failed.
@@ -66,6 +64,8 @@ const supervisorOutputPrompt = `Final synthesis discipline:
 Keep the user looped in without flooding them.
 
 # Final answer guidance
+
+Before producing final synthesis, verify the stop condition was explicitly checked against evidence. Do not present status as completed unless COMPLETE was classified.
 
 When useful, structure the final response with status, summary, facts, assumptions, findings, files changed, commands run, verification, risks, and next actions. Keep the user looped in without flooding them.`;
 

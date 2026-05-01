@@ -17,6 +17,7 @@ export const scoutAgent = withAgentModes(new Agent({
   description: scoutAgentDescription,
   instructions: composeAgentInstructions(
     scoutInstructionsPrompt,
+    undefined,
     sharedPolicyPrompts.specialist,
     sharedToolPrompts.specialist,
     scoutPolicyPrompts,
