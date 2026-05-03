@@ -15,6 +15,10 @@ test*/
 **/test*/
 story*.md
 **/story*.md
+test*snapshot*.mjs
+.agents/exec/*snapshot*/
+.agents/exec/*snapshot*.md
+.agents/plans/*snapshot*.md
 
 # Environment files (contain secrets)
 .env
