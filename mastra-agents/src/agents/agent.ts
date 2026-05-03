@@ -1,4 +1,5 @@
 import { Agent } from "@mastra/core/agent";
+import { createSlackAdapter } from "@chat-adapter/slack";
 
 import {
   supervisorAgentDescription,
@@ -49,6 +50,13 @@ export const supervisorAgent = withAgentModes(new Agent({
     read_snapshots: workspaceTools.readSnapshots,
     git_snapshot_query: workspaceTools.gitSnapshotQuery,
     capture_snapshot: workspaceTools.captureSnapshot,
+  },
+  channels: {
+    adapters: process.env.ENABLE_SLACK_CHANNEL === "true"
+      ? {
+          slack: createSlackAdapter(),
+        }
+      : {},
   },
 }), agentModesFromPrompts(supervisorModePrompts));
 

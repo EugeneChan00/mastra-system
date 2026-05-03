@@ -21,3 +21,23 @@ src/
 - **Zod-typed tools**: Every tool uses `createTool` with typed input/output schemas
 - **Composite storage**: PostgresStore + DuckDBStore via MastraCompositeStore
 - **Step ceilings**: Each agent has a hard `maxSteps` default to prevent runaway loops
+
+## Slack Channel Integration (RT88-66)
+
+The shared `supervisorAgent` now supports Mastra Channels with the official Chat SDK Slack adapter.
+
+- Adapter package: `@chat-adapter/slack`
+- Enable Slack adapter: set `ENABLE_SLACK_CHANNEL=true`
+- Credentials are sourced from Chat SDK standard env vars (for webhook mode):
+  - `SLACK_BOT_TOKEN`
+  - `SLACK_SIGNING_SECRET`
+
+When enabled, Mastra exposes this webhook endpoint for Slack events:
+
+- `/api/agents/supervisor-agent/channels/slack/webhook`
+
+Recommended Slack behavior for this integration:
+
+- Use app mentions and thread replies as the primary interaction surface.
+- Keep responses thread-continuous for follow-ups.
+- Use webhook signature verification (via Slack signing secret) and dedupe in upstream webhook ingress/middleware.
