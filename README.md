@@ -52,6 +52,8 @@ Supervisor + 6 specialist agents in the Daytona agents pattern (Eugenechan00/day
 
 See [Mastra agent calling methods](docs/mastra-agent-calling-methods.md) for the Pi `agent_query` surface, default `resourceId`/`threadId` behavior, and how to start a new conversation thread intentionally.
 
+See [Mastra multi-channel architecture plan](docs/mastra-multichannel-architecture-plan.md) for the shared parent-scope implementation plan spanning Slack, GitHub, and Linear channels.
+
 See [daytona-agents](https://github.com/Eugenechan00/daytona-agents) for the reference implementation.
 
 ### `@mastrasystem/pi` — Pi TUI
