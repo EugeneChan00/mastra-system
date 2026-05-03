@@ -24,7 +24,8 @@
     "@mastra/memory": "1.17.1",
     "@mastra/observability": "1.10.0",
     "@mastra/pg": "1.9.2",
-    "zod": "3.25.76"
+    "zod": "3.25.76",
+    "@chat-adapter/linear": "^4.27.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
