@@ -7,14 +7,15 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "mastra dev",
-    "build": "mastra build",
+    "dev": "node scripts/with-env.mjs mastra dev",
+    "build": "node scripts/with-env.mjs mastra build",
     "test": "node --test \"test/**/*.test.js\"",
-    "start": "mastra start",
-    "studio": "node scripts/run-studio.mjs"
+    "start": "node scripts/with-env.mjs mastra start",
+    "studio": "node scripts/with-env.mjs node scripts/run-studio.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.21.0",
+    "@chat-adapter/github": "^4.27.0",
     "@chat-adapter/linear": "^4.27.0",
     "@chat-adapter/slack": "^4.27.0",
     "@daytona/sdk": "0.169.0",
