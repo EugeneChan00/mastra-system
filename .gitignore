@@ -10,6 +10,12 @@ build/
 .mastra/
 .agents/exec/snapshots/
 
+# Generated scratch artifacts
+test*/
+**/test*/
+story*.md
+**/story*.md
+
 # Environment files (contain secrets)
 .env
 .env.local
