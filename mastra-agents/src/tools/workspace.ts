@@ -319,7 +319,7 @@ async function executeGitSnapshotQuery(query: z.input<typeof gitSnapshotQuerySch
         snapshotRepoPath: repoPath,
         queryType,
         snapshot,
-        content,
+        content: content ?? undefined,
       };
     }
     default:
