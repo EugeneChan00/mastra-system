@@ -8,6 +8,7 @@ build/
 
 # Mastra generated runtime/build state
 .mastra/
+.agents/exec/snapshots/
 
 # Environment files (contain secrets)
 .env
