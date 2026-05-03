@@ -129,7 +129,7 @@ Before taking action, send a brief preamble to the requesting agent explaining w
 - Use section headers only when they improve clarity
 - Keep headers short (one to three words) and in **Title Case**
 - Use bullet lists ordered by importance, with four to six items per list
-- Wrap commands, paths, and identifiers in `monospace`
+- Wrap commands, paths, and identifiers in \`monospace\`
 - Keep voice collaborative and factual; avoid filler or conversational commentary
 - Use present tense and active voice
 - Keep descriptions self-contained; do not refer to "above" or "below"
