@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.21.0",
+    "@chat-adapter/linear": "^4.27.0",
     "@chat-adapter/slack": "^4.27.0",
     "@daytona/sdk": "0.169.0",
     "@mastra/core": "1.28.0",
